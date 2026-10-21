@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LOGO! Tủ</title>
+<style>
+:root{
+  --bg:#0B1320;--card:#162233;--card2:#1D2B40;--line:#26364D;--ink:#EAF0F7;--soft:#8FA1B8;
+  --amber:#FFC23D;--green:#34D399;--red:#F87171;--redSoft:rgba(248,113,113,.15);--blue:#5B9DFF;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Roboto,"Segoe UI",system-ui,sans-serif;
+  -webkit-user-select:none;user-select:none;overscroll-behavior:none}
+.top{background:radial-gradient(120% 140% at 85% 0%,#1F4E79 0%,#132A45 45%,#0B1320 100%);padding:14px 18px 16px;position:relative;overflow:hidden}
+.top::after{content:"";position:absolute;right:-30px;top:4px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,rgba(255,194,61,.35),transparent 65%);pointer-events:none}
+.row1{display:flex;align-items:flex-start;gap:10px;position:relative;z-index:1}
+.row1 .l{flex:1;min-width:0}
+.kicker{font-size:12px;color:var(--soft)}
+h1{margin:2px 0 8px;font-size:22px;font-weight:700;line-height:1.2;word-wrap:break-word}
+.chip{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:99px;padding:5px 11px;font-size:12.5px;max-width:100%}
+.chip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip i{flex:none;width:9px;height:9px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.chip.ok i{background:var(--green);box-shadow:0 0 10px var(--green)}
+.chip.bad i{background:var(--red);box-shadow:0 0 10px var(--red)}
+.chip.wait i{animation:blink 1s infinite alternate}
+@keyframes blink{to{opacity:.25}}
+.gear{flex:none;width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:var(--ink);font-size:20px;cursor:pointer}
+.gear:active{transform:scale(.9)}
+.sum{display:flex;align-items:center;gap:14px;margin-top:14px;position:relative;z-index:1}
+.ring{width:64px;height:64px;flex:none}
+.sum b{font-size:22px}
+.sum small{display:block;color:var(--soft);font-size:12.5px}
+.wrap{padding:4px 14px 32px}
+.sec{font-size:13px;font-weight:700;letter-spacing:.02em;color:var(--soft);margin:18px 4px 9px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:10px;transition:background .4s,border-color .4s,box-shadow .4s}
+.seg{position:relative;display:grid;grid-template-columns:1fr 1fr;background:#0E1828;border:1px solid var(--line);border-radius:12px;padding:4px}
+.seg button{position:relative;z-index:1;border:0;background:none;color:var(--soft);font:700 15px inherit;font-family:inherit;padding:12px 0;cursor:pointer;transition:color .3s}
+.seg button.on{color:#0B1320}
+.seg .thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:9px;background:var(--green);box-shadow:0 0 16px rgba(52,211,153,.5);transition:transform .35s cubic-bezier(.3,1.3,.5,1),background .35s,box-shadow .35s}
+.seg.man .thumb{transform:translateX(100%);background:var(--amber);box-shadow:0 0 16px rgba(255,194,61,.55)}
+.seg.unknown .thumb{opacity:0}
+.seg.busy .thumb{animation:wait .5s infinite alternate}
+.modeh{font-size:12.5px;color:var(--soft);margin:9px 2px 0}
+.out{display:flex;align-items:center;gap:13px}
+.out.lit{background:linear-gradient(100deg,rgba(255,194,61,.17),var(--card) 60%);border-color:rgba(255,194,61,.45);box-shadow:0 0 22px rgba(255,194,61,.12)}
+.out.warn{background:linear-gradient(100deg,var(--redSoft),var(--card) 60%);border-color:rgba(248,113,113,.55)}
+.bulbw{width:48px;height:48px;border-radius:50%;flex:none;display:grid;place-items:center;background:#0E1828;transition:background .4s,box-shadow .4s}
+.bulb{width:28px;height:28px}
+.bulb .g{fill:#3A4A60;transition:fill .4s}
+.bulb .b{fill:#56677D}
+.lit .bulbw{background:rgba(255,194,61,.18);box-shadow:0 0 0 6px rgba(255,194,61,.08),0 0 26px rgba(255,194,61,.65)}
+.lit .bulb .g{fill:var(--amber)}
+.warn .bulb .g{fill:var(--red)}
+.info{flex:1;min-width:0}
+.info b{display:block;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.info small{display:block;font-size:12.5px;color:var(--soft);margin-top:2px}
+.warn .info small{color:var(--red)}
+.tag{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 6px;margin-top:5px;background:#0E1828;color:var(--soft)}
+.tag.on{background:rgba(255,194,61,.15);color:var(--amber)}
+.sw{position:relative;width:58px;height:32px;border-radius:99px;border:0;background:#33445C;cursor:pointer;flex:none;transition:background .3s,box-shadow .3s,opacity .2s;display:block}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4);transition:transform .3s cubic-bezier(.3,1.4,.5,1)}
+.sw[aria-checked=true]{background:var(--amber);box-shadow:0 0 14px rgba(255,194,61,.55)}
+.sw[aria-checked=true]::after{transform:translateX(26px)}
+.sw[disabled]{opacity:.35;cursor:default}
+.sw.wait{opacity:1;animation:wait .5s infinite alternate}
+@keyframes wait{to{opacity:.45}}
+.lock{font-size:11px;color:var(--soft);text-align:center;margin-top:4px;min-height:13px}
+.ins{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.inp{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 4px 8px;text-align:center;cursor:pointer;font:inherit;color:var(--ink);transition:background .35s,border-color .35s,transform .1s;min-width:0}
+.inp:active{transform:scale(.94)}
+.inp[disabled]{opacity:.55}
+.inp i{display:block;width:12px;height:12px;border-radius:50%;margin:0 auto 6px;background:#33445C;transition:background .3s,box-shadow .3s}
+.inp.on{border-color:rgba(91,157,255,.6);background:rgba(91,157,255,.12)}
+.inp.on i{background:var(--blue);box-shadow:0 0 10px var(--blue)}
+.inp.busy{animation:wait .5s infinite alternate}
+.inp b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inp small{font-size:10.5px;color:var(--soft)}
+.hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hd b{font-size:14.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.times{display:flex;gap:18px;margin:9px 0 10px;font-size:13px;color:var(--soft)}
+.times strong{display:block;font-size:20px;color:var(--ink)}
+.bar{position:relative;height:10px;border-radius:99px;background:#0E1828;overflow:hidden}
+.bar .on{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,#FF9F1C,var(--amber));box-shadow:0 0 10px rgba(255,194,61,.6)}
+.bar .now{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 6px #fff}
+.ticks{display:flex;justify-content:space-between;font-size:10.5px;color:var(--soft);margin-top:4px}
+.btn{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:10px;background:var(--card2);color:var(--ink);font:600 13.5px inherit;font-family:inherit;padding:10px 14px;cursor:pointer;transition:transform .1s,background .3s;flex:none}
+.btn:active{transform:scale(.94)}
+.btn[disabled]{opacity:.4;cursor:default}
+.btn.wait{opacity:1;background:var(--amber);color:#0B1320;animation:wait .5s infinite alternate}
+.pv{font-size:22px;font-weight:700;margin-top:4px}
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.35);transform:scale(0);animation:rip .5s ease-out forwards;pointer-events:none}
+@keyframes rip{to{transform:scale(4);opacity:0}}
+.foot{font-size:12px;color:var(--soft);margin:14px 4px 0;white-space:pre-line}
+.foot .err{color:var(--red)}
+.enter{animation:enter .35s ease-out backwards}
+@keyframes enter{from{opacity:0;transform:translateY(16px)}}
+.dim{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;z-index:5}
+.dim.show{display:flex}
+.dlg{background:#18263A;border-top:1px solid var(--line);border-radius:22px 22px 0 0;width:100%;padding:10px 20px calc(22px + env(safe-area-inset-bottom));animation:up .28s ease-out}
+@keyframes up{from{transform:translateY(100%)}}
+.grab{width:40px;height:4px;border-radius:9px;background:#3A4A60;margin:0 auto 14px}
+.dlg h3{margin:0 0 8px;font-size:18px}
+.dlg p{margin:0 0 14px;white-space:pre-line;font-size:15px;line-height:1.45;color:#cdd7e3}
+.dlg input{font-size:30px;padding:8px 10px;width:100%;border:1px solid var(--line);border-radius:12px;background:#0E1828;color:var(--ink);color-scheme:dark;-webkit-user-select:text;user-select:text}
+.acts{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:16px}
+.acts button{border:0;border-radius:12px;padding:15px;font:700 15px inherit;font-family:inherit;cursor:pointer}
+.acts .no{background:#26364D;color:var(--ink)}
+.acts .yes{background:var(--amber);color:#0B1320}
+.toast{position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(16px);background:#EAF0F7;color:#0B1320;font-size:13.5px;font-weight:600;padding:10px 16px;border-radius:99px;opacity:0;transition:.25s;max-width:90vw;text-align:center;z-index:6;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%)}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="row1">
+    <div class="l"><div class="kicker">Tủ điều khiển chiếu sáng</div><h1 id="title">Tủ điều khiển</h1>
+      <span class="chip wait" id="chip"><i></i><span id="chipT">Đang kết nối…</span></span></div>
+    <button class="gear" id="gear" aria-label="Cài đặt">⚙</button>
+  </div>
+  <div class="sum">
+    <svg class="ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="none" stroke="#26364D" stroke-width="7"/>
+      <circle id="ringArc" cx="32" cy="32" r="27" fill="none" stroke="#FFC23D" stroke-width="7" stroke-linecap="round" stroke-dasharray="0 170" transform="rotate(-90 32 32)" style="transition:stroke-dasharray .6s;filter:drop-shadow(0 0 4px #FFC23D)"/>
+      <text id="ringT" x="32" y="37" text-anchor="middle" font-size="15" font-weight="700" fill="#EAF0F7">–</text></svg>
+    <div><b id="sumT">Chưa có dữ liệu</b><small id="sumS"></small></div>
+  </div>
+</div>
+<div class="wrap" id="wrap"></div>
+<div class="dim" id="dim"><div class="dlg" id="dlg"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// Cầu nối tới phần Kotlin (khi mở trên máy tính để thử thì chỉ ghi log)
+const A = window.Android || new Proxy({}, {get:(_,k)=>(...a)=>console.log('Android.'+String(k), ...a)});
+const $=id=>document.getElementById(id);
+const two=n=>String(n).padStart(2,'0');
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const BULB='<svg class="bulb" viewBox="0 0 24 24" aria-hidden="true"><path class="g" d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/><rect class="b" x="8.5" y="18" width="7" height="2" rx="1"/><rect class="b" x="9.5" y="21" width="5" height="1.6" rx=".8"/></svg>';
+let S=null, shape='';
+
+function tap(){try{A.haptic()}catch(e){}}
+function ripple(b,e){const r=b.getBoundingClientRect(),s=Math.max(r.width,r.height),sp=document.createElement('span');sp.className='ripple';sp.style.width=sp.style.height=s+'px';sp.style.left=(e.clientX-r.left-s/2)+'px';sp.style.top=(e.clientY-r.top-s/2)+'px';b.appendChild(sp);setTimeout(()=>sp.remove(),500)}
+document.addEventListener('pointerdown',e=>{const b=e.target.closest('.btn,.inp,.gear');if(b&&!b.disabled)ripple(b,e)});
+let tt;function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2400)}
+window.toast=toast;
+
+function sheet(title,body,ok,onOk){
+  $('dlg').innerHTML=`<div class="grab"></div>${title?`<h3>${esc(title)}</h3>`:''}${body}<div class="acts"><button class="no" id="dno">Hủy</button><button class="yes" id="dyes">${esc(ok)}</button></div>`;
+  $('dim').classList.add('show');
+  $('dno').onclick=()=>{tap();closeSheet()};
+  $('dyes').onclick=()=>{tap();if(onOk()!==false)closeSheet()};
+}
+function closeSheet(){$('dim').classList.remove('show')}
+window.closeSheet=closeSheet;
+$('dim').onclick=e=>{if(e.target.id==='dim')closeSheet()};
+function ask(title,body,ok,act){if(S&&S.confirm===false){act();return}sheet(title,body,ok,()=>{act()})}
+function needOnline(){if(!S||!S.online){toast('LOGO! đang offline, không gửi lệnh');return false}return true}
+
+$('gear').onclick=()=>{tap();A.settings()};
+
+/* Dựng khung theo số ngõ, chỉ làm lại khi cấu hình đổi */
+function build(){
+  const W=$('wrap');W.innerHTML='';let d=0;
+  const add=h=>{const w=document.createElement('div');w.innerHTML=h;const e=w.firstElementChild;e.classList.add('enter');e.style.animationDelay=(d++*40)+'ms';W.appendChild(e);return e};
+  if(S.modeAvail){
+    add('<div class="sec">CHẾ ĐỘ ĐIỀU KHIỂN</div>');
+    add('<div class="card"><div class="seg unknown" id="seg"><span class="thumb"></span><button id="mA">Tự động</button><button id="mT">Tay</button></div><div class="modeh" id="modeH"></div></div>');
+    $('mA').onclick=()=>setMode(false);$('mT').onclick=()=>setMode(true);
+  }
+  if(S.outs.length){
+    add('<div class="sec">NHÁNH ĐÈN</div>');
+    S.outs.forEach((o,i)=>{add(`<div class="card out" id="o${i}"><div class="bulbw">${BULB}</div><div class="info"><b>${esc(o.name)}</b><small id="os${i}">–</small><span class="tag" id="ot${i}">Q${i+1}</span></div><div><button class="sw" id="sw${i}" role="switch" aria-checked="false" aria-label="${esc(o.name)}"></button><div class="lock" id="lk${i}"></div></div></div>`);
+      $('sw'+i).onclick=()=>{tap();const o=S.outs[i];
+        if(S.manual===false){toast('Chuyển sang chế độ Tay để bật/tắt');return}
+        if(!needOnline())return;const nx=!o.cmd;
+        ask(`${nx?'Bật':'Tắt'} ${o.name}?`,'<p>Lệnh sẽ gửi tới LOGO!.</p>',nx?'Bật đèn':'Tắt đèn',()=>A.setOutput(i,nx))}});
+  }
+  if(S.scheds.length){
+    add('<div class="sec">LỊCH BẬT / TẮT</div>');
+    S.scheds.forEach((s,i)=>{add(`<div class="card"><div class="hd"><b>${esc(s.name)}</b><button class="btn" id="bs${i}">Đổi giờ</button></div><div class="times"><span>🌙 Bật<strong id="ton${i}">–:–</strong></span><span>☀ Tắt<strong id="tof${i}">–:–</strong></span></div><div class="bar" id="bar${i}"></div><div class="ticks"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span></div></div>`);
+      $('bs'+i).onclick=()=>{tap();editSched(i)}});
+  }
+  if(S.params.length){
+    add('<div class="sec">THÔNG SỐ</div>');
+    S.params.forEach((p,i)=>{add(`<div class="card"><div class="hd"><b>${esc(p.name)}</b><button class="btn" id="bp${i}">Sửa</button></div><div class="pv" id="pv${i}">–</div></div>`);
+      $('bp'+i).onclick=()=>{tap();editParam(i)}});
+  }
+  if(S.ins.length){
+    add('<div class="sec">NGÕ VÀO · bấm để kích</div>');
+    const g=add('<div class="ins"></div>');
+    S.ins.forEach((n,i)=>{g.insertAdjacentHTML('beforeend',`<button class="inp" id="in${i}" aria-label="Kích ${esc(n.name)}"><i></i><b>${esc(n.name)}</b><small>I${i+1}</small></button>`);
+      $('in'+i).onclick=()=>{tap();if(!needOnline())return;ask(`Kích ${S.ins[i].name}?`,`<p>Gửi xung ${S.pulseMs} ms vào cờ M tương ứng.</p>`,'Kích',()=>A.pulse(i))}});
+  }
+  add('<div class="foot" id="foot"></div>');
+}
+
+function setMode(man){tap();if(S.manual===man)return;if(!needOnline())return;
+  ask(man?'Chuyển sang chế độ TAY?':'Về chế độ TỰ ĐỘNG?',`<p>${man?'Đèn sẽ theo công tắc trên app, lịch tạm ngưng.':'Đèn chạy lại theo lịch bật/tắt của LOGO!.'}</p>`,'Xác nhận',()=>A.setMode(man))}
+
+function editSched(i){if(!needOnline())return;const s=S.scheds[i],t=s.t||[18,0,5,30];
+  sheet('🌙 Giờ BẬT đèn',`<input type="time" id="t1" value="${two(t[0])}:${two(t[1])}">`,'Tiếp',()=>{
+    const on=($('t1').value||'').split(':').map(Number);if(on.length<2||isNaN(on[0])){toast('Chọn giờ bật');return false}
+    setTimeout(()=>sheet('☀ Giờ TẮT đèn',`<input type="time" id="t2" value="${two(t[2])}:${two(t[3])}">`,'Tiếp',()=>{
+      const of=($('t2').value||'').split(':').map(Number);if(of.length<2||isNaN(of[0])){toast('Chọn giờ tắt');return false}
+      const night=on[0]*60+on[1]>of[0]*60+of[1];
+      setTimeout(()=>sheet('Ghi lịch xuống LOGO!?',`<p>${esc(s.name)}\nBật ${two(on[0])}:${two(on[1])} · Tắt ${two(of[0])}:${two(of[1])}${night?'\n(tắt vào sáng hôm sau)':''}</p>`,'Ghi lịch',()=>A.setSched(i,on[0],on[1],of[0],of[1])),30);
+    }),30);
+  });
+}
+function editParam(i){if(!needOnline())return;const p=S.params[i];
+  sheet(p.name+(p.unit?` (${p.unit})`:''),`<p>Từ ${p.min} đến ${p.max}</p><input type="number" inputmode="numeric" id="pin" value="${p.v==null?'':p.v}">`,'Ghi',()=>{
+    const v=parseInt($('pin').value,10);if(isNaN(v)||v<p.min||v>p.max){toast(`Giá trị phải từ ${p.min} đến ${p.max}`);return false}
+    A.setParam(i,v)});
+}
+
+function bar(el,t,now){if(!t){el.innerHTML='';return}const a=(t[0]*60+t[1])/14.4,b=(t[2]*60+t[3])/14.4;
+  const segs=a<=b?[[a,b]]:[[a,100],[0,b]];
+  el.innerHTML=segs.map(([x,y])=>`<span class="on" style="left:${x}%;width:${y-x}%"></span>`).join('')+`<span class="now" style="left:${now/14.4}%"></span>`}
+
+/* Kotlin gọi hàm này mỗi khi có dữ liệu mới */
+window.update=function(st){
+  const sh=JSON.stringify([st.modeAvail,st.outs.map(o=>o.name),st.ins.map(o=>o.name),st.scheds.map(o=>o.name),st.params.map(o=>o.name)]);
+  S=st; if(sh!==shape){shape=sh;build()}
+  $('title').textContent=st.title;
+  $('chip').className='chip '+st.conn;$('chipT').textContent=st.connText;
+  let lit=0,known=0;
+  st.outs.forEach((o,i)=>{if(o.q!=null)known++;if(o.q)lit++;
+    const el=$('o'+i);el.classList.toggle('lit',!!o.q&&!o.warn);el.classList.toggle('warn',!!o.warn);
+    $('os'+i).textContent=o.sub;
+    const tg=$('ot'+i);tg.textContent=`Q${i+1} `+(o.q==null?'?':o.q?'BẬT':'TẮT');tg.classList.toggle('on',!!o.q);
+    const sw=$('sw'+i);sw.setAttribute('aria-checked',String(!!o.cmd));
+    sw.disabled=!st.online||st.manual===false||o.busy;sw.classList.toggle('wait',o.busy);
+    $('lk'+i).textContent=o.busy?'Chờ…':st.manual===false?'Tự động':'';
+  });
+  const n=st.outs.length||1;
+  $('ringArc').setAttribute('stroke-dasharray',`${lit/n*169.6} 170`);$('ringT').textContent=known?`${lit}/${st.outs.length}`:'–';
+  $('sumT').textContent=known?`${lit} nhánh đang sáng`:'Chưa có dữ liệu';
+  $('sumS').textContent=st.manual===true?'Chế độ TAY':st.manual===false?'Chế độ tự động theo lịch':'';
+  if(st.modeAvail){const sg=$('seg');sg.classList.toggle('man',st.manual===true);sg.classList.toggle('unknown',st.manual==null);sg.classList.toggle('busy',st.busyMode);
+    $('mA').classList.toggle('on',st.manual===false);$('mT').classList.toggle('on',st.manual===true);
+    $('modeH').textContent=st.busyMode?'Đang gửi lệnh…':st.manual===true?'Bạn đang bật/tắt từng nhánh bằng tay. Nhớ trả về Tự động khi xong.':st.manual===false?'Đèn chạy theo lịch bật/tắt.':'Chưa đọc được chế độ từ LOGO!.'}
+  st.scheds.forEach((s,i)=>{$('ton'+i).textContent=s.t?`${two(s.t[0])}:${two(s.t[1])}`:'–:–';$('tof'+i).textContent=s.t?`${two(s.t[2])}:${two(s.t[3])}`:'–:–';
+    bar($('bar'+i),s.t,st.nowMin);const b=$('bs'+i);b.textContent=s.busy?'Đang ghi…':'Đổi giờ';b.classList.toggle('wait',s.busy);b.disabled=!st.online||s.busy});
+  st.params.forEach((p,i)=>{$('pv'+i).textContent=p.v==null?'–':`${p.v}${p.unit?' '+p.unit:''}`;const b=$('bp'+i);b.textContent=p.busy?'Đang ghi…':'Sửa';b.classList.toggle('wait',p.busy);b.disabled=!st.online||p.busy});
+  st.ins.forEach((o,i)=>{const b=$('in'+i);b.classList.toggle('on',!!o.on);b.classList.toggle('busy',o.busy);b.disabled=!st.online||o.busy});
+  $('foot').innerHTML=esc(st.footer)+(st.err?`\n<span class="err">${esc(st.err)}</span>`:'');
+};
+try{A.ready()}catch(e){}
+</script>
+</body>
+</html>
