@@ -63,6 +63,29 @@ Cờ **M8** chọn chế độ: `0` = **Tự động** (đèn theo hẹn giờ),
 
 Chạy thử trên tủ không tải, bật từng ngõ một trước khi đấu tải thật.
 
+### 3.2b Chỉnh giờ bật/tắt đèn từ app (Parameter VM Mapping)
+
+App ghi giờ bật/tắt trực tiếp vào khối **Weekly Timer** của từng nhánh, không cần nạp lại chương trình.
+
+1. Mỗi nhánh dùng một khối Weekly Timer làm `Hẹn_giờ_x` trong chương trình ở mục 3.2.
+2. Soft Comfort → **Tools → Parameter VM Mapping**: thêm giờ bật (On time) và giờ tắt (Off time), Cam 1, của từng khối vào VM theo bảng:
+
+| Lịch trong app | Khối | VW giờ bật | VW phút bật | VW giờ tắt | VW phút tắt |
+|---|---|---|---|---|---|
+| Lịch nhánh Q1 | Weekly Timer nhánh 1 | VW20 | VW22 | VW24 | VW26 |
+| Lịch nhánh Q2 | Weekly Timer nhánh 2 | VW28 | VW30 | VW32 | VW34 |
+| Lịch nhánh Q3 | Weekly Timer nhánh 3 | VW36 | VW38 | VW40 | VW42 |
+| Lịch nhánh Q4 | Weekly Timer nhánh 4 | VW44 | VW46 | VW48 | VW50 |
+
+3. Soft Comfort có thể lưu giờ theo kiểu khác (giờ và phút gộp chung một word). Xem bảng mapping Soft Comfort tạo ra rồi chọn kiểu tương ứng trong **Cài đặt → Lịch bật/tắt**:
+   - `4w`: 4 word riêng (giờ bật, phút bật, giờ tắt, phút tắt) – mặc định
+   - `goi`: 2 word, mỗi word = giờ × 256 + phút
+   - `hhmm`: 2 word, mỗi word = giờ × 100 + phút (vd 1830), dùng khi tự viết khối so sánh giờ
+4. Chế độ từ xa (MQTT): thêm các VW trên vào danh sách Cloud transfer với **tên biến đúng như địa chỉ** (VW20, VW22, …) và cho phép ghi.
+5. Nạp chương trình. Trong app bấm **Đổi giờ** → chọn giờ bật → chọn giờ tắt → **Ghi**. Giờ tắt nhỏ hơn giờ bật nghĩa là tắt vào sáng hôm sau.
+
+**Kiểm tra lần đầu:** đổi giờ trên app, rồi trên màn hình LOGO! (hoặc Soft Comfort Online Test) mở tham số khối Weekly Timer xem giờ đã đổi đúng chưa. Tắt nguồn LOGO! rồi bật lại, kiểm tra giờ vẫn giữ. App ghi lịch cho mọi ngày trong tuần theo cấu hình ngày của khối.
+
 ### 3.3 Modbus TCP (cho chế độ tại chỗ)
 Ethernet Connections → chuột phải → **Add Modbus connection** → kiểu **Server**, bật quyền **ghi** (write access).
 
@@ -133,6 +156,7 @@ Bước 2 không thấy dữ liệu → lỗi nằm ở cấu hình LOGO!/router
 - Theo dõi đèn sáng/tắt qua ngõ ra Q; báo lỗi khi có phản hồi điện nhánh không khớp.
 - Nút Kích tạo xung (mặc định 1 giây) cho ngõ vào ảo.
 - Đọc/ghi thông số VW có giới hạn nhỏ nhất/lớn nhất.
+- **Chỉnh giờ bật/tắt đèn** từng nhánh từ xa (Weekly Timer qua Parameter VM Mapping).
 - Hỏi xác nhận trước lệnh (tắt được).
 - Chế độ từ xa nhớ giá trị cuối cùng, mở app là thấy ngay.
 - Đổi tên tủ, tên từng ngõ, số ngõ, địa chỉ, máy chủ ngay trong app.
