@@ -1,11 +1,20 @@
 package vn.chieusang.logo
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.TimePickerDialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
@@ -52,6 +61,15 @@ class MainActivity : Activity() {
     private val cAlarm = Color.parseColor("#C62F28")
     private val cLine = Color.parseColor("#A9AAA4")
     private val cBtn = Color.parseColor("#2B3033")
+    private val cRowOn = Color.parseColor("#CFE6CC")
+    private val cCellOn = Color.parseColor("#EDE0AE")
+    private val cRowWarn = Color.parseColor("#EFCFCA")
+
+    // Hiệu ứng: màu đang hiển thị của từng ô, các hoạt ảnh đang chạy
+    private val shownColor = HashMap<View, Int>()
+    private val colorAnims = HashMap<View, ValueAnimator>()
+    private val pulses = HashMap<Button, ObjectAnimator>()
+    private var dotPulse: ObjectAnimator? = null
 
     private val ui = Handler(Looper.getMainLooper())
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
@@ -80,16 +98,18 @@ class MainActivity : Activity() {
     private var lastError = ""
     private val busy = HashSet<String>()
 
-    private class OutRow(val lamp: View, val sub: TextView, val btn: Button)
-    private class ModeCard(val value: TextView, val hint: TextView, val btn: Button)
+    private class OutRow(val row: View, val lamp: View, val sub: TextView, val btn: Button)
+    private class ModeCard(val row: View, val value: TextView, val hint: TextView, val btn: Button)
 
     private var modeCard: ModeCard? = null
-    private class InCell(val lamp: View, val btn: Button)
+    private class InCell(val cell: View, val lamp: View, val btn: Button)
     private class ParamRow(val value: TextView, val btn: Button)
 
     private val outRows = ArrayList<OutRow>()
     private val inCells = ArrayList<InCell>()
     private val paramRows = ArrayList<ParamRow>()
+    private class SchedRow(val value: TextView, val btn: Button)
+    private val schedRows = ArrayList<SchedRow>()
 
     private lateinit var titleView: TextView
     private lateinit var statusDot: View
@@ -295,6 +315,10 @@ class MainActivity : Activity() {
             for (p in conf.params) {
                 data["VW${p.vw}"] = c.readHoldingRegisters(p.vw / 2, 1)[0].toDouble()
             }
+            for (sc in conf.scheds) {
+                val regs = c.readHoldingRegisters(sc.vw / 2, sc.words)
+                regs.forEachIndexed { i, v -> data["VW${sc.addr(i)}"] = v.toDouble() }
+            }
             ui.post {
                 if (g != gen) return@post
                 vals.putAll(data)
@@ -438,6 +462,67 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------------------------------------------------------- lịch bật/tắt
+
+    private fun two(n: Int) = if (n < 10) "0$n" else "$n"
+
+    /** Giờ bật và giờ tắt (h, m, h, m) đọc được từ LOGO!, null nếu chưa có hoặc sai dạng. */
+    private fun schedTimes(sc: Sched): IntArray? {
+        val w = IntArray(sc.words) { i -> vals["VW${sc.addr(i)}"]?.toInt() ?: return null }
+        val t = when (sc.fmt) {
+            "goi" -> intArrayOf(w[0] shr 8 and 0xFF, w[0] and 0xFF, w[1] shr 8 and 0xFF, w[1] and 0xFF)
+            "hhmm" -> intArrayOf(w[0] / 100, w[0] % 100, w[1] / 100, w[1] % 100)
+            else -> intArrayOf(w[0], w[1], w[2], w[3])
+        }
+        val ok = t[0] in 0..23 && t[1] in 0..59 && t[2] in 0..23 && t[3] in 0..59
+        return if (ok) t else null
+    }
+
+    private fun schedWords(sc: Sched, t: IntArray): IntArray = when (sc.fmt) {
+        "goi" -> intArrayOf(t[0] * 256 + t[1], t[2] * 256 + t[3])
+        "hhmm" -> intArrayOf(t[0] * 100 + t[1], t[2] * 100 + t[3])
+        else -> intArrayOf(t[0], t[1], t[2], t[3])
+    }
+
+    /** Ghi lịch xuống LOGO! (luồng nền). MQTT gửi tất cả trong một gói. */
+    private fun writeSched(sc: Sched, t: IntArray) {
+        val w = schedWords(sc, t)
+        if (cfg.isMqtt) {
+            val m = LinkedHashMap<String, Int>()
+            w.forEachIndexed { i, v -> m["VW${sc.addr(i)}"] = v }
+            (mqtt ?: throw IOException("Chưa nối máy chủ MQTT")).writeMany(m)
+        } else {
+            val c = ensureClient()
+            w.forEachIndexed { i, v -> c.writeRegister(sc.addr(i) / 2, v) }
+        }
+    }
+
+    private fun editSchedule(k: Int) {
+        if (!isOnline()) {
+            toast("LOGO! đang offline")
+            return
+        }
+        val sc = cfg.scheds.getOrNull(k) ?: return
+        val cur = schedTimes(sc) ?: intArrayOf(18, 0, 5, 30)
+        val onDlg = TimePickerDialog(this, { _, onH, onM ->
+            val offDlg = TimePickerDialog(this, { _, offH, offM ->
+                val t = intArrayOf(onH, onM, offH, offM)
+                val q = "${sc.name}\nBật đèn lúc ${two(onH)}:${two(onM)}\nTắt đèn lúc ${two(offH)}:${two(offM)}" +
+                    (if (onH * 60 + onM > offH * 60 + offM) "\n(tắt vào sáng hôm sau)" else "")
+                AlertDialog.Builder(this)
+                    .setTitle("Ghi lịch xuống LOGO!?")
+                    .setMessage(q)
+                    .setPositiveButton("Ghi") { _, _ -> sendCommand("s$k", null) { writeSched(sc, t) } }
+                    .setNegativeButton("Hủy", null)
+                    .show()
+            }, cur[2], cur[3], true)
+            offDlg.setTitle("Giờ TẮT đèn")
+            offDlg.show()
+        }, cur[0], cur[1], true)
+        onDlg.setTitle("Giờ BẬT đèn")
+        onDlg.show()
+    }
+
     private fun editParam(k: Int) {
         if (!isOnline()) {
             toast("LOGO! đang offline")
@@ -491,8 +576,88 @@ class MainActivity : Activity() {
         return v
     }
 
+    /** Đổi màu nền mượt (350 ms). [pop] = nảy nhẹ khi chuyển sang trạng thái sáng. */
+    private fun fadeColor(v: View, d: GradientDrawable, color: Int, pop: Boolean = false) {
+        val old = shownColor[v]
+        if (old == color) return
+        shownColor[v] = color
+        colorAnims.remove(v)?.cancel()
+        if (old == null) {
+            d.setColor(color)
+            return
+        }
+        val a = ValueAnimator.ofArgb(old, color)
+        a.duration = 350
+        a.addUpdateListener { d.setColor(it.animatedValue as Int) }
+        a.start()
+        colorAnims[v] = a
+        if (pop) {
+            v.scaleX = 0.82f
+            v.scaleY = 0.82f
+            v.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(4f)).setDuration(420).start()
+        }
+    }
+
     private fun setLamp(v: View, color: Int) {
-        (v.background as GradientDrawable).setColor(color)
+        fadeColor(v, v.background as GradientDrawable, color, pop = color == cLampOn || color == cLampIn)
+    }
+
+    /** Nút nhún xuống khi chạm, bật lại khi thả. */
+    private fun addPressEffect(v: View) {
+        v.setOnTouchListener { view, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN ->
+                    view.animate().scaleX(0.92f).scaleY(0.92f).setInterpolator(DecelerateInterpolator()).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    view.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(3f)).setDuration(280).start()
+            }
+            false
+        }
+    }
+
+    /** Bấm: rung nhẹ rồi thực hiện. */
+    private fun View.onTap(action: () -> Unit) {
+        setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            action()
+        }
+    }
+
+    /** Chữ đổi nội dung thì nảy nhẹ để người dùng thấy. */
+    private fun setTextPop(t: TextView, s: String) {
+        if (t.text.toString() == s) return
+        val first = t.text.isNullOrEmpty() || t.text.toString() == "–"
+        t.text = s
+        if (!first) {
+            t.scaleX = 1.18f
+            t.scaleY = 1.18f
+            t.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(2f)).setDuration(360).start()
+        }
+    }
+
+    private fun setStatusPulse(on: Boolean) {
+        if (on && dotPulse == null) {
+            val a = ObjectAnimator.ofFloat(statusDot, "alpha", 1f, 0.25f)
+            a.duration = 600
+            a.repeatMode = ValueAnimator.REVERSE
+            a.repeatCount = ValueAnimator.INFINITE
+            a.start()
+            dotPulse = a
+        } else if (!on && dotPulse != null) {
+            dotPulse?.cancel()
+            dotPulse = null
+            statusDot.alpha = 1f
+        }
+    }
+
+    private fun animateEntrance() {
+        for (i in 0 until content.childCount) {
+            val c = content.getChildAt(i)
+            c.alpha = 0f
+            c.translationY = dp(18).toFloat()
+            c.animate().alpha(1f).translationY(0f).setStartDelay(i * 35L)
+                .setDuration(320).setInterpolator(DecelerateInterpolator()).start()
+        }
     }
 
     private fun text(s: String, sizeSp: Float, color: Int, bold: Boolean = false): TextView {
@@ -511,7 +676,10 @@ class MainActivity : Activity() {
         b.setTextColor(Color.WHITE)
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         b.typeface = Typeface.DEFAULT_BOLD
-        b.background = rounded(cBtn, 6)
+        val shape = rounded(cBtn, 6)
+        b.background = RippleDrawable(ColorStateList.valueOf(Color.argb(90, 255, 255, 255)), shape, null)
+        b.tag = shape
+        addPressEffect(b)
         b.minWidth = dp(minWidthDp)
         b.minimumWidth = dp(minWidthDp)
         b.minHeight = dp(heightDp)
@@ -521,12 +689,26 @@ class MainActivity : Activity() {
         return b
     }
 
-    private fun setButton(b: Button, label: String, color: Int, textColor: Int, enabled: Boolean) {
+    /** [pulse] = nút nhấp nháy nhẹ trong lúc chờ LOGO! phản hồi. */
+    private fun setButton(b: Button, label: String, color: Int, textColor: Int, enabled: Boolean, pulse: Boolean = false) {
         b.text = label
-        (b.background as GradientDrawable).setColor(color)
+        val shape = b.tag as? GradientDrawable
+        if (shape != null) fadeColor(b, shape, color)
         b.setTextColor(textColor)
         b.isEnabled = enabled
-        b.alpha = if (enabled) 1f else 0.45f
+        if (pulse) {
+            if (!pulses.containsKey(b)) {
+                val a = ObjectAnimator.ofFloat(b, "alpha", 1f, 0.5f)
+                a.duration = 450
+                a.repeatMode = ValueAnimator.REVERSE
+                a.repeatCount = ValueAnimator.INFINITE
+                a.start()
+                pulses[b] = a
+            }
+        } else {
+            pulses.remove(b)?.cancel()
+            b.alpha = if (enabled) 1f else 0.45f
+        }
     }
 
     private fun sectionTitle(s: String): TextView {
@@ -566,11 +748,14 @@ class MainActivity : Activity() {
         settings.text = "Cài đặt"
         settings.isAllCaps = false
         settings.setTextColor(cInk)
-        settings.background = rounded(cPlate, 6, cLine)
+        settings.background = RippleDrawable(
+            ColorStateList.valueOf(Color.argb(50, 0, 0, 0)), rounded(cPlate, 6, cLine), null
+        )
         settings.stateListAnimator = null
         settings.minHeight = dp(44)
         settings.minimumHeight = dp(44)
-        settings.setOnClickListener { showSettings() }
+        addPressEffect(settings)
+        settings.onTap { showSettings() }
         header.addView(settings)
         root.addView(header)
 
@@ -594,7 +779,13 @@ class MainActivity : Activity() {
         outRows.clear()
         inCells.clear()
         paramRows.clear()
+        schedRows.clear()
         modeCard = null
+        for (a in pulses.values) a.cancel()
+        pulses.clear()
+        for (a in colorAnims.values) a.cancel()
+        colorAnims.clear()
+        shownColor.clear()
 
         // Chế độ Tự động / Tay
         if (conf.modeM > 0) {
@@ -616,10 +807,10 @@ class MainActivity : Activity() {
             plp.rightMargin = dp(12)
             row.addView(plate, plp)
             val btn = pushButton("Chuyển", 96, 52)
-            btn.setOnClickListener { toggleMode() }
+            btn.onTap { toggleMode() }
             row.addView(btn)
             content.addView(row)
-            modeCard = ModeCard(value, hint, btn)
+            modeCard = ModeCard(row, value, hint, btn)
         }
 
         // Ngõ ra
@@ -651,10 +842,10 @@ class MainActivity : Activity() {
             row.addView(plate, plp)
 
             val btn = pushButton("Bật", 84, 52)
-            btn.setOnClickListener { toggleOutput(idx) }
+            btn.onTap { toggleOutput(idx) }
             row.addView(btn)
             content.addView(row)
-            outRows.add(OutRow(lamp, sub, btn))
+            outRows.add(OutRow(row, lamp, sub, btn))
         }
 
         // Ngõ vào, 4 ô mỗi hàng
@@ -691,14 +882,14 @@ class MainActivity : Activity() {
                 cell.addView(text("I${idx + 1}", 12f, cInkSoft))
                 val btn = pushButton("Kích", 0, 38)
                 btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                btn.setOnClickListener { pulseInput(idx) }
+                btn.onTap { pulseInput(idx) }
                 val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38))
                 blp.topMargin = dp(4)
                 cell.addView(btn, blp)
                 val clp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 clp.setMargins(dp(3), 0, dp(3), 0)
                 rowLayout?.addView(cell, clp)
-                inCells.add(InCell(lamp, btn))
+                inCells.add(InCell(cell, lamp, btn))
             }
             val rest = (4 - conf.inNames.size % 4) % 4
             repeat(rest) {
@@ -732,16 +923,47 @@ class MainActivity : Activity() {
                 plp.rightMargin = dp(12)
                 row.addView(plate, plp)
                 val btn = pushButton("Sửa", 72, 46)
-                btn.setOnClickListener { editParam(k) }
+                btn.onTap { editParam(k) }
                 row.addView(btn)
                 content.addView(row)
                 paramRows.add(ParamRow(value, btn))
             }
         }
 
+        // Lịch bật/tắt đèn
+        if (conf.scheds.isNotEmpty()) {
+            content.addView(sectionTitle("Lịch bật/tắt đèn"))
+            conf.scheds.forEachIndexed { k, sc ->
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.HORIZONTAL
+                row.gravity = Gravity.CENTER_VERTICAL
+                row.background = rounded(cPanel, 6, cLine)
+                row.setPadding(dp(12), dp(10), dp(12), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(10)
+                row.layoutParams = lp
+                val plate = LinearLayout(this)
+                plate.orientation = LinearLayout.VERTICAL
+                plate.background = rounded(cPlate, 3, cLine)
+                plate.setPadding(dp(10), dp(6), dp(10), dp(6))
+                plate.addView(text(sc.name, 15f, cInk, true))
+                val value = text("–", 19f, cInk, true)
+                plate.addView(value)
+                val plp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                plp.rightMargin = dp(12)
+                row.addView(plate, plp)
+                val btn = pushButton("Đổi giờ", 84, 46)
+                btn.onTap { editSchedule(k) }
+                row.addView(btn)
+                content.addView(row)
+                schedRows.add(SchedRow(value, btn))
+            }
+        }
+
         footer = text("", 13f, cInkSoft)
         footer.setPadding(dp(4), dp(14), dp(4), 0)
         content.addView(footer)
+        animateEntrance()
     }
 
     private fun render() {
@@ -786,25 +1008,28 @@ class MainActivity : Activity() {
             }
         }
 
+        setStatusPulse(shownColor[statusDot] == cLampIn)
+
         val manual = manualMode()
         modeCard?.let { mc ->
             val known = bit("M${conf.modeM}") != null
             when {
                 !known -> {
-                    mc.value.text = "Chưa có dữ liệu"
+                    setTextPop(mc.value, "Chưa có dữ liệu")
                     mc.hint.text = "Cờ M${conf.modeM}"
                 }
                 manual == true -> {
-                    mc.value.text = "TAY"
+                    setTextPop(mc.value, "TAY")
                     mc.hint.text = "Đèn theo nút bấm trên app"
                 }
                 else -> {
-                    mc.value.text = "TỰ ĐỘNG"
+                    setTextPop(mc.value, "TỰ ĐỘNG")
                     mc.hint.text = "Đèn theo hẹn giờ của LOGO!"
                 }
             }
             mc.value.setTextColor(if (manual == true) cAlarm else cInk)
-            if (busy.contains("mode")) setButton(mc.btn, "Chờ…", cLampIn, cInk, false)
+            fadeColor(mc.row, mc.row.background as GradientDrawable, if (manual == true) cRowWarn else cPanel)
+            if (busy.contains("mode")) setButton(mc.btn, "Chờ…", cLampIn, cInk, false, true)
             else setButton(mc.btn, if (manual == true) "Về Tự động" else "Sang Tay", cBtn, Color.WHITE, online)
         }
 
@@ -835,10 +1060,18 @@ class MainActivity : Activity() {
             }
             r.sub.text = "Q${idx + 1} · $state$extra"
             r.sub.setTextColor(if (warn) cAlarm else cInkSoft)
+            fadeColor(
+                r.row, r.row.background as GradientDrawable,
+                when {
+                    warn -> cRowWarn
+                    q == true -> cRowOn
+                    else -> cPanel
+                }
+            )
 
             val cmdOn = mKnown ?: (q ?: false)
             when {
-                b -> setButton(r.btn, "Chờ…", cLampIn, cInk, false)
+                b -> setButton(r.btn, "Chờ…", cLampIn, cInk, false, true)
                 manual == false -> setButton(r.btn, "Tự động", cLampOff, Color.WHITE, false)
                 cmdOn -> setButton(r.btn, "Tắt", cAlarm, Color.WHITE, online)
                 else -> setButton(r.btn, "Bật", cBtn, Color.WHITE, online)
@@ -849,15 +1082,28 @@ class MainActivity : Activity() {
             val v = bit("I${idx + 1}") == true
             val b = busy.contains("i$idx") || bit("M${conf.inCmdM + idx}") == true
             setLamp(c.lamp, if (v) cLampIn else cLampOff)
-            if (b) setButton(c.btn, "Đang kích", cLampIn, cInk, false)
+            fadeColor(c.cell, c.cell.background as GradientDrawable, if (v) cCellOn else cPanel)
+            if (b) setButton(c.btn, "Đang kích", cLampIn, cInk, false, true)
             else setButton(c.btn, "Kích", cBtn, Color.WHITE, online)
+        }
+
+        conf.scheds.forEachIndexed { k, sc ->
+            val r = schedRows.getOrNull(k) ?: return@forEachIndexed
+            val t = schedTimes(sc)
+            setTextPop(
+                r.value,
+                if (t == null) "Bật –:–  ·  Tắt –:–"
+                else "Bật ${two(t[0])}:${two(t[1])}  ·  Tắt ${two(t[2])}:${two(t[3])}"
+            )
+            if (busy.contains("s$k")) setButton(r.btn, "Chờ…", cLampIn, cInk, false, true)
+            else setButton(r.btn, "Đổi giờ", cBtn, Color.WHITE, online)
         }
 
         conf.params.forEachIndexed { k, p ->
             val r = paramRows.getOrNull(k) ?: return@forEachIndexed
             val v = vals[paramKey(p)]?.toInt()
-            r.value.text = if (v == null) "–" else if (p.unit.isEmpty()) "$v" else "$v ${p.unit}"
-            if (busy.contains("p$k")) setButton(r.btn, "Chờ…", cLampIn, cInk, false)
+            setTextPop(r.value, if (v == null) "–" else if (p.unit.isEmpty()) "$v" else "$v ${p.unit}")
+            if (busy.contains("p$k")) setButton(r.btn, "Chờ…", cLampIn, cInk, false, true)
             else setButton(r.btn, "Sửa", cBtn, Color.WHITE, online)
         }
 
@@ -973,6 +1219,10 @@ class MainActivity : Activity() {
             box, "Thông số, mỗi dòng: Tên;VW;nhỏ nhất;lớn nhất;đơn vị;tag MQTT",
             c.params.joinToString("\n") { "${it.name};${it.vw};${it.min};${it.max};${it.unit};${it.tag}" }, txt, 3
         )
+        val fSched = field(
+            box, "Lịch bật/tắt, mỗi dòng: Tên;VW đầu;kiểu (4w | goi | hhmm)",
+            c.scheds.joinToString("\n") { "${it.name};${it.vw};${it.fmt}" }, txt, 4
+        )
         val fOutM = field(box, "Ngõ ra Q1 điều khiển bằng cờ M số", c.outCmdM.toString(), num)
         val fInM = field(box, "Nút Kích của I1 dùng cờ M số", c.inCmdM.toString(), num)
         val fPulse = field(box, "Độ dài xung nút Kích (ms)", c.pulseMs.toString(), num)
@@ -1026,6 +1276,18 @@ class MainActivity : Activity() {
                         )
                     )
                 }
+                val scheds = ArrayList<Sched>()
+                for (line in fSched.text.toString().lines()) {
+                    if (line.isBlank()) continue
+                    val p = line.split(";").map { it.trim() }
+                    val vw = p.getOrNull(1)?.toIntOrNull()
+                    val fmt = (p.getOrNull(2) ?: "4w").lowercase()
+                    if (vw == null || vw < 0 || vw % 2 != 0 || fmt !in listOf("4w", "goi", "hhmm")) {
+                        toast("Dòng lịch sai: \"$line\". VW là số chẵn, kiểu là 4w, goi hoặc hhmm")
+                        return@setOnClickListener
+                    }
+                    scheds.add(Sched(p[0].ifEmpty { "Lịch VW$vw" }, vw, fmt))
+                }
                 fun names(e: EditText) = e.text.toString().lines().map { it.trim() }.filter { it.isNotEmpty() }
                 val newCfg = AppConfig(
                     title = fTitle.text.toString().trim().ifEmpty { "Tủ điều khiển" },
@@ -1047,6 +1309,7 @@ class MainActivity : Activity() {
                     outNames = names(fOut).take(20),
                     inNames = names(fIn).take(24),
                     params = params,
+                    scheds = scheds,
                     outCmdM = (fOutM.text.toString().toIntOrNull() ?: 1).coerceAtLeast(1),
                     inCmdM = (fInM.text.toString().toIntOrNull() ?: 11).coerceAtLeast(1),
                     pulseMs = (fPulse.text.toString().toIntOrNull() ?: 1000).coerceIn(100, 10000),

@@ -16,6 +16,18 @@ data class Param(
 )
 
 /**
+ * Lịch bật/tắt của một khối Weekly Timer, đã gắn vào VM bằng "Parameter VM Mapping" trong Soft Comfort.
+ * [vw] = địa chỉ VW đầu tiên. Kiểu lưu [fmt]:
+ *  - "4w":   4 word liên tiếp: VW giờ bật, VW+2 phút bật, VW+4 giờ tắt, VW+6 phút tắt
+ *  - "goi":  2 word: VW = giờ bật × 256 + phút bật, VW+2 = giờ tắt × 256 + phút tắt
+ *  - "hhmm": 2 word: VW = giờ bật × 100 + phút bật (vd 1830), VW+2 = giờ tắt × 100 + phút tắt
+ */
+data class Sched(val name: String, val vw: Int, val fmt: String) {
+    val words: Int get() = if (fmt == "4w") 4 else 2
+    fun addr(i: Int): Int = vw + 2 * i
+}
+
+/**
  * Cấu hình app.
  *
  * Chế độ "modbus" (tại chỗ): nối thẳng LOGO! qua WiFi/LAN, cổng 502.
@@ -58,7 +70,9 @@ data class AppConfig(
     /** Cờ M chọn chế độ: 1 = Tay (app bật/tắt), 0 = Tự động (theo hẹn giờ). 0 ở đây = không dùng chế độ. */
     val modeM: Int = 8,
     /** Ngõ vào phản hồi điện nhánh cho từng ngõ ra (vd [5,6,7,8] = Q1↔I5...). 0 = không có. */
-    val fbInputs: List<Int> = emptyList()
+    val fbInputs: List<Int> = emptyList(),
+    /** Lịch bật/tắt đèn chỉnh từ app. Mặc định mỗi nhánh Q1–Q4 một lịch, cách nhau 8 byte. */
+    val scheds: List<Sched> = (0 until 4).map { Sched("Lịch nhánh Q${it + 1}", 20 + 8 * it, "4w") }
 ) {
     fun fbFor(outIdx: Int): Int = fbInputs.getOrNull(outIdx) ?: 0
 
@@ -104,6 +118,9 @@ data class AppConfig(
         o.put("pulseMs", pulseMs)
         o.put("modeM", modeM)
         o.put("fbInputs", JSONArray(fbInputs))
+        val sa = JSONArray()
+        for (s in scheds) sa.put(JSONObject().put("name", s.name).put("vw", s.vw).put("fmt", s.fmt))
+        o.put("scheds", sa)
         return o.toString()
     }
 
@@ -118,6 +135,16 @@ data class AppConfig(
             if (a == null) return fallback
             val r = ArrayList<String>()
             for (i in 0 until a.length()) r.add(a.optString(i))
+            return r
+        }
+
+        private fun scheds(a: JSONArray?): List<Sched>? {
+            if (a == null) return null
+            val r = ArrayList<Sched>()
+            for (i in 0 until a.length()) {
+                val so = a.getJSONObject(i)
+                r.add(Sched(so.optString("name", "Lịch"), so.optInt("vw", 20), so.optString("fmt", "4w")))
+            }
             return r
         }
 
@@ -173,7 +200,8 @@ data class AppConfig(
                 inCmdM = o.optInt("inCmdM", d.inCmdM),
                 pulseMs = o.optInt("pulseMs", d.pulseMs),
                 modeM = o.optInt("modeM", d.modeM),
-                fbInputs = ints(o.optJSONArray("fbInputs"))
+                fbInputs = ints(o.optJSONArray("fbInputs")),
+                scheds = scheds(o.optJSONArray("scheds")) ?: d.scheds
             )
         }
 

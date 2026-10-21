@@ -141,6 +141,20 @@ class MqttLink(
         }
     }
 
+    /** Gửi nhiều biến trong MỘT gói tin, để LOGO! nhận đủ giờ bật và giờ tắt cùng lúc. */
+    fun writeMany(values: Map<String, Int>) {
+        val c = client
+        if (c == null || !c.isConnected) throw IOException("Chưa nối máy chủ MQTT")
+        val st = JSONObject()
+        for ((tag, v) in values) st.put(tag, JSONObject().put("value", JSONArray().put(v)))
+        val payload = JSONObject().put("state", st).toString()
+        try {
+            c.publish(cfg.subTopic, payload.toByteArray(Charsets.UTF_8), 1, false)
+        } catch (e: MqttException) {
+            throw IOException(describe(e))
+        }
+    }
+
     companion object {
         fun describe(e: Throwable): String {
             if (e is MqttException) {
