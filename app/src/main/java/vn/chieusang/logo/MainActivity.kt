@@ -1,20 +1,11 @@
 package vn.chieusang.logo
 
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.TimePickerDialog
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
-import android.view.HapticFeedbackConstants
-import android.view.MotionEvent
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
@@ -23,9 +14,12 @@ import android.os.Looper
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -34,6 +28,7 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.ConnectException
@@ -41,35 +36,20 @@ import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import javax.net.SocketFactory
 
+/**
+ * Màn hình chính. Giao diện vẽ bằng assets/ui.html trong WebView;
+ * phần kết nối LOGO! (Modbus TCP / MQTT) chạy bằng Kotlin.
+ * Kotlin gửi trạng thái sang giao diện qua window.update(json),
+ * giao diện gửi lệnh về qua đối tượng "Android" (lớp Bridge).
+ */
 class MainActivity : Activity() {
-
-    // Màu "mặt tủ điện"
-    private val cEnclosure = Color.parseColor("#D7D7D1")
-    private val cPanel = Color.parseColor("#C4C5BF")
-    private val cPlate = Color.parseColor("#F6F6F1")
-    private val cInk = Color.parseColor("#1F2326")
-    private val cInkSoft = Color.parseColor("#555A5C")
-    private val cLampOn = Color.parseColor("#22A447")
-    private val cLampOff = Color.parseColor("#7D817C")
-    private val cLampIn = Color.parseColor("#F0B400")
-    private val cAlarm = Color.parseColor("#C62F28")
-    private val cLine = Color.parseColor("#A9AAA4")
-    private val cBtn = Color.parseColor("#2B3033")
-    private val cRowOn = Color.parseColor("#CFE6CC")
-    private val cCellOn = Color.parseColor("#EDE0AE")
-    private val cRowWarn = Color.parseColor("#EFCFCA")
-
-    // Hiệu ứng: màu đang hiển thị của từng ô, các hoạt ảnh đang chạy
-    private val shownColor = HashMap<View, Int>()
-    private val colorAnims = HashMap<View, ValueAnimator>()
-    private val pulses = HashMap<Button, ObjectAnimator>()
-    private var dotPulse: ObjectAnimator? = null
 
     private val ui = Handler(Looper.getMainLooper())
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
@@ -98,24 +78,8 @@ class MainActivity : Activity() {
     private var lastError = ""
     private val busy = HashSet<String>()
 
-    private class OutRow(val row: View, val lamp: View, val sub: TextView, val btn: Button)
-    private class ModeCard(val row: View, val value: TextView, val hint: TextView, val btn: Button)
-
-    private var modeCard: ModeCard? = null
-    private class InCell(val cell: View, val lamp: View, val btn: Button)
-    private class ParamRow(val value: TextView, val btn: Button)
-
-    private val outRows = ArrayList<OutRow>()
-    private val inCells = ArrayList<InCell>()
-    private val paramRows = ArrayList<ParamRow>()
-    private class SchedRow(val value: TextView, val btn: Button)
-    private val schedRows = ArrayList<SchedRow>()
-
-    private lateinit var titleView: TextView
-    private lateinit var statusDot: View
-    private lateinit var statusText: TextView
-    private lateinit var footer: TextView
-    private lateinit var content: LinearLayout
+    private lateinit var web: WebView
+    private var pageReady = false
 
     private val tick = object : Runnable {
         override fun run() {
@@ -130,13 +94,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         cfg = AppConfig.load(this)
-        window.statusBarColor = cEnclosure
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-        buildShell()
-        buildContent()
+        window.statusBarColor = Color.parseColor("#132A45")
+        window.navigationBarColor = Color.parseColor("#0B1320")
+        setupWeb()
         if (cfg.isMqtt) loadCache()
-        render()
     }
 
     override fun onResume() {
@@ -157,6 +118,75 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         io.shutdownNow()
+        web.destroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // Nút Back đóng hộp thoại đang mở trên giao diện trước, rồi mới thoát app
+        web.evaluateJavascript("(function(){var d=document.getElementById('dim');if(d&&d.classList.contains('show')){closeSheet();return 1}return 0})()") { r ->
+            if (r != "1") {
+                @Suppress("DEPRECATION")
+                super.onBackPressed()
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- giao diện web
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWeb() {
+        web = WebView(this)
+        web.setBackgroundColor(Color.parseColor("#0B1320"))
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.isVerticalScrollBarEnabled = false
+        web.overScrollMode = View.OVER_SCROLL_NEVER
+        web.addJavascriptInterface(Bridge(), "Android")
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                pageReady = true
+                render()
+            }
+        }
+        setContentView(web)
+        web.loadUrl("file:///android_asset/ui.html")
+    }
+
+    /** Các hàm giao diện gọi được: Android.setMode(true)... Chạy trên luồng riêng nên chuyển về luồng chính. */
+    inner class Bridge {
+        @JavascriptInterface
+        fun ready() = ui.post { render() }.let { }
+
+        @JavascriptInterface
+        fun haptic() = ui.post { web.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }.let { }
+
+        @JavascriptInterface
+        fun settings() = ui.post { showSettings() }.let { }
+
+        @JavascriptInterface
+        fun setMode(manual: Boolean) = ui.post { cmdMode(manual) }.let { }
+
+        @JavascriptInterface
+        fun setOutput(idx: Int, on: Boolean) = ui.post { cmdOutput(idx, on) }.let { }
+
+        @JavascriptInterface
+        fun pulse(idx: Int) = ui.post { cmdPulse(idx) }.let { }
+
+        @JavascriptInterface
+        fun setSched(k: Int, onH: Int, onM: Int, offH: Int, offM: Int) =
+            ui.post { cmdSched(k, intArrayOf(onH, onM, offH, offM)) }.let { }
+
+        @JavascriptInterface
+        fun setParam(k: Int, v: Int) = ui.post { cmdParam(k, v) }.let { }
+    }
+
+    private fun jsToast(s: String) {
+        if (!pageReady) {
+            Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+            return
+        }
+        web.evaluateJavascript("toast(" + JSONObject.quote(s) + ")", null)
     }
 
     private fun startLink() {
@@ -421,38 +451,28 @@ class MainActivity : Activity() {
         return bit("M${conf.modeM}") ?: false
     }
 
-    private fun toggleMode() {
+    private fun cmdMode(manual: Boolean) {
         val conf = cfg
         if (conf.modeM <= 0) return
-        val next = manualMode() != true
-        val q = if (next)
-            "Chuyển sang chế độ TAY?\nĐèn sẽ theo nút bấm trên app, hẹn giờ tạm ngưng."
-        else
-            "Chuyển về chế độ TỰ ĐỘNG?\nĐèn sẽ chạy theo hẹn giờ của LOGO!."
-        sendCommand("mode", q) { writeBit(conf.modeM, next) }
+        sendCommand("mode", null) { writeBit(conf.modeM, manual) }
     }
 
-    private fun toggleOutput(idx: Int) {
+    private fun cmdOutput(idx: Int, on: Boolean) {
         val conf = cfg
+        if (idx !in conf.outNames.indices) return
         if (manualMode() == false) {
-            toast("Đang ở chế độ Tự động. Chuyển sang chế độ Tay để bật/tắt bằng app.")
+            toast("Chuyển sang chế độ Tay để bật/tắt bằng app")
             return
         }
-        val m = conf.outCmdM + idx
-        val cur = bit("M$m") ?: bit("Q${idx + 1}") ?: false
-        val next = !cur
-        val name = conf.outNames[idx]
-        sendCommand("q$idx", (if (next) "Bật " else "Tắt ") + "\"$name\"?") {
-            writeBit(m, next)
-        }
+        sendCommand("q$idx", null) { writeBit(conf.outCmdM + idx, on) }
     }
 
-    private fun pulseInput(idx: Int) {
+    private fun cmdPulse(idx: Int) {
         val conf = cfg
+        if (idx !in conf.inNames.indices) return
         val m = conf.inCmdM + idx
         val ms = conf.pulseMs.coerceIn(100, 10000).toLong()
-        val name = conf.inNames[idx]
-        sendCommand("i$idx", "Kích \"$name\" trong $ms ms?") {
+        sendCommand("i$idx", null) {
             writeBit(m, true)
             try {
                 Thread.sleep(ms)
@@ -460,6 +480,24 @@ class MainActivity : Activity() {
                 writeBit(m, false)
             }
         }
+    }
+
+    private fun cmdSched(k: Int, t: IntArray) {
+        val sc = cfg.scheds.getOrNull(k) ?: return
+        if (t[0] !in 0..23 || t[1] !in 0..59 || t[2] !in 0..23 || t[3] !in 0..59) {
+            toast("Giờ không hợp lệ")
+            return
+        }
+        sendCommand("s$k", null) { writeSched(sc, t) }
+    }
+
+    private fun cmdParam(k: Int, v: Int) {
+        val p = cfg.params.getOrNull(k) ?: return
+        if (v < p.min || v > p.max) {
+            toast("Giá trị phải từ ${p.min} đến ${p.max}")
+            return
+        }
+        sendCommand("p$k", null) { writeParam(p, v) }
     }
 
     // ---------------------------------------------------------------- lịch bật/tắt
@@ -497,168 +535,135 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun editSchedule(k: Int) {
-        if (!isOnline()) {
-            toast("LOGO! đang offline")
-            return
-        }
-        val sc = cfg.scheds.getOrNull(k) ?: return
-        val cur = schedTimes(sc) ?: intArrayOf(18, 0, 5, 30)
-        val onDlg = TimePickerDialog(this, { _, onH, onM ->
-            val offDlg = TimePickerDialog(this, { _, offH, offM ->
-                val t = intArrayOf(onH, onM, offH, offM)
-                val q = "${sc.name}\nBật đèn lúc ${two(onH)}:${two(onM)}\nTắt đèn lúc ${two(offH)}:${two(offM)}" +
-                    (if (onH * 60 + onM > offH * 60 + offM) "\n(tắt vào sáng hôm sau)" else "")
-                AlertDialog.Builder(this)
-                    .setTitle("Ghi lịch xuống LOGO!?")
-                    .setMessage(q)
-                    .setPositiveButton("Ghi") { _, _ -> sendCommand("s$k", null) { writeSched(sc, t) } }
-                    .setNegativeButton("Hủy", null)
-                    .show()
-            }, cur[2], cur[3], true)
-            offDlg.setTitle("Giờ TẮT đèn")
-            offDlg.show()
-        }, cur[0], cur[1], true)
-        onDlg.setTitle("Giờ BẬT đèn")
-        onDlg.show()
-    }
+    // ---------------------------------------------------------------- gửi trạng thái sang giao diện
 
-    private fun editParam(k: Int) {
-        if (!isOnline()) {
-            toast("LOGO! đang offline")
-            return
-        }
-        val p = cfg.params[k]
-        val input = EditText(this)
-        input.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
-        input.setText(vals[paramKey(p)]?.toInt()?.toString() ?: "")
-        input.setSelectAllOnFocus(true)
-        val box = LinearLayout(this)
-        box.setPadding(dp(20), dp(8), dp(20), 0)
-        box.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        AlertDialog.Builder(this)
-            .setTitle(p.name + if (p.unit.isNotEmpty()) " (${p.unit})" else "")
-            .setMessage("Từ ${p.min} đến ${p.max}")
-            .setView(box)
-            .setPositiveButton("Ghi") { _, _ ->
-                val v = input.text.toString().trim().toIntOrNull()
-                if (v == null || v < p.min || v > p.max) {
-                    toast("Giá trị phải từ ${p.min} đến ${p.max}")
-                } else {
-                    sendCommand("p$k", null) { writeParam(p, v) }
-                }
+    private fun render() {
+        if (!pageReady) return
+        val conf = cfg
+        val online = isOnline()
+        val time = SimpleDateFormat("HH:mm:ss dd/MM", Locale("vi", "VN"))
+        val st = JSONObject()
+        st.put("title", conf.title)
+        st.put("online", online)
+        st.put("confirm", conf.confirm)
+        st.put("pulseMs", conf.pulseMs)
+
+        // Dòng trạng thái kết nối
+        val conn: String
+        val connText: String
+        if (conf.isMqtt) {
+            when {
+                online -> { conn = "ok"; connText = "LOGO! online · qua cloud" }
+                mqttConnected && lastMsg == 0L -> { conn = "wait"; connText = "Đã nối máy chủ, chờ LOGO!…" }
+                mqttConnected -> { conn = "bad"; connText = "LOGO! mất tín hiệu" }
+                else -> { conn = if (mqttMsg.startsWith("Đang")) "wait" else "bad"; connText = "Máy chủ: chưa kết nối" }
             }
-            .setNegativeButton("Hủy", null)
-            .show()
+        } else {
+            when {
+                online -> { conn = "ok"; connText = "LOGO! online · ${conf.ip}" }
+                hasData -> { conn = "bad"; connText = "Mất kết nối · ${conf.ip}" }
+                else -> { conn = "wait"; connText = "Đang kết nối ${conf.ip}…" }
+            }
+        }
+        st.put("conn", conn)
+        st.put("connText", connText)
+
+        val manual = manualMode()
+        st.put("modeAvail", conf.modeM > 0)
+        st.put("manual", if (manual == null || bit("M${conf.modeM}") == null) JSONObject.NULL else manual)
+        st.put("busyMode", busy.contains("mode"))
+
+        val outs = JSONArray()
+        conf.outNames.forEachIndexed { idx, name ->
+            val q = bit("Q${idx + 1}")
+            val mKnown = bit("M${conf.outCmdM + idx}")
+            val fbNo = conf.fbFor(idx)
+            val fb = if (fbNo > 0) bit("I$fbNo") else null
+            var warn = false
+            val state = when {
+                q == null -> "Chưa có dữ liệu"
+                q && fb == false -> { warn = true; "Có lệnh bật nhưng nhánh không có điện (I$fbNo)" }
+                !q && fb == true -> { warn = true; "Đã tắt nhưng nhánh vẫn có điện (I$fbNo)" }
+                q -> "Đang sáng"
+                else -> "Đang tắt"
+            }
+            val extra = when {
+                q == null || warn -> ""
+                manual == false -> " · theo lịch"
+                manual == true && mKnown != null && mKnown != q -> " · đã ra lệnh, chờ LOGO!"
+                manual == true -> " · bằng tay"
+                q && mKnown == false -> " · bật từ tủ"
+                else -> ""
+            }
+            val o = JSONObject()
+            o.put("name", name)
+            o.put("q", q ?: JSONObject.NULL)
+            o.put("cmd", if (manual == false) (q ?: false) else (mKnown ?: (q ?: false)))
+            o.put("sub", state + extra)
+            o.put("warn", warn)
+            o.put("busy", busy.contains("q$idx"))
+            outs.put(o)
+        }
+        st.put("outs", outs)
+
+        val ins = JSONArray()
+        conf.inNames.forEachIndexed { idx, name ->
+            val o = JSONObject()
+            o.put("name", name)
+            o.put("on", bit("I${idx + 1}") == true)
+            o.put("busy", busy.contains("i$idx") || bit("M${conf.inCmdM + idx}") == true)
+            ins.put(o)
+        }
+        st.put("ins", ins)
+
+        val scheds = JSONArray()
+        conf.scheds.forEachIndexed { k, sc ->
+            val o = JSONObject()
+            o.put("name", sc.name)
+            val t = schedTimes(sc)
+            o.put("t", if (t == null) JSONObject.NULL else JSONArray().put(t[0]).put(t[1]).put(t[2]).put(t[3]))
+            o.put("busy", busy.contains("s$k"))
+            scheds.put(o)
+        }
+        st.put("scheds", scheds)
+
+        val params = JSONArray()
+        conf.params.forEachIndexed { k, p ->
+            val o = JSONObject()
+            o.put("name", p.name)
+            o.put("unit", p.unit)
+            o.put("min", p.min)
+            o.put("max", p.max)
+            val v = vals[paramKey(p)]?.toInt()
+            o.put("v", v ?: JSONObject.NULL)
+            o.put("busy", busy.contains("p$k"))
+            params.put(o)
+        }
+        st.put("params", params)
+
+        val cal = Calendar.getInstance()
+        st.put("nowMin", cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE))
+
+        val err = if (conf.isMqtt) (if (!online && !mqttConnected) mqttMsg else "") else (if (!online) lastError else "")
+        val footer = buildString {
+            if (lastOk > 0) {
+                append(if (cacheTime > 0 && cacheTime == lastOk) "Giá trị lưu lần trước, lúc " else "Cập nhật lúc ")
+                append(time.format(Date(lastOk)))
+            } else {
+                append("Chưa nhận dữ liệu từ LOGO!")
+            }
+            if (conf.isMqtt && lastMsg > 0) append("\nTín hiệu LOGO! gần nhất: ").append(time.format(Date(lastMsg)))
+            if (conf.isMqtt && online && lastOk == 0L) append("\nLOGO! chỉ gửi biến khi có thay đổi. Chờ tủ đổi trạng thái.")
+        }
+        st.put("footer", footer)
+        st.put("err", err)
+        web.evaluateJavascript("window.update&&window.update(" + st.toString() + ")", null)
     }
 
-    // ---------------------------------------------------------------- giao diện
+    // ---------------------------------------------------------------- tiện ích cho màn hình Cài đặt
 
     private fun dp(v: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
-
-    private fun rounded(color: Int, radiusDp: Int, strokeColor: Int? = null): GradientDrawable {
-        val d = GradientDrawable()
-        d.setColor(color)
-        d.cornerRadius = dp(radiusDp).toFloat()
-        if (strokeColor != null) d.setStroke(dp(1), strokeColor)
-        return d
-    }
-
-    private fun circle(color: Int, sizeDp: Int, ringDp: Int): View {
-        val v = View(this)
-        val d = GradientDrawable()
-        d.shape = GradientDrawable.OVAL
-        d.setColor(color)
-        d.setStroke(dp(ringDp), Color.parseColor("#9A9C97"))
-        v.background = d
-        v.layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
-        return v
-    }
-
-    /** Đổi màu nền mượt (350 ms). [pop] = nảy nhẹ khi chuyển sang trạng thái sáng. */
-    private fun fadeColor(v: View, d: GradientDrawable, color: Int, pop: Boolean = false) {
-        val old = shownColor[v]
-        if (old == color) return
-        shownColor[v] = color
-        colorAnims.remove(v)?.cancel()
-        if (old == null) {
-            d.setColor(color)
-            return
-        }
-        val a = ValueAnimator.ofArgb(old, color)
-        a.duration = 350
-        a.addUpdateListener { d.setColor(it.animatedValue as Int) }
-        a.start()
-        colorAnims[v] = a
-        if (pop) {
-            v.scaleX = 0.82f
-            v.scaleY = 0.82f
-            v.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(4f)).setDuration(420).start()
-        }
-    }
-
-    private fun setLamp(v: View, color: Int) {
-        fadeColor(v, v.background as GradientDrawable, color, pop = color == cLampOn || color == cLampIn)
-    }
-
-    /** Nút nhún xuống khi chạm, bật lại khi thả. */
-    private fun addPressEffect(v: View) {
-        v.setOnTouchListener { view, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN ->
-                    view.animate().scaleX(0.92f).scaleY(0.92f).setInterpolator(DecelerateInterpolator()).setDuration(90).start()
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                    view.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(3f)).setDuration(280).start()
-            }
-            false
-        }
-    }
-
-    /** Bấm: rung nhẹ rồi thực hiện. */
-    private fun View.onTap(action: () -> Unit) {
-        setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            action()
-        }
-    }
-
-    /** Chữ đổi nội dung thì nảy nhẹ để người dùng thấy. */
-    private fun setTextPop(t: TextView, s: String) {
-        if (t.text.toString() == s) return
-        val first = t.text.isNullOrEmpty() || t.text.toString() == "–"
-        t.text = s
-        if (!first) {
-            t.scaleX = 1.18f
-            t.scaleY = 1.18f
-            t.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(2f)).setDuration(360).start()
-        }
-    }
-
-    private fun setStatusPulse(on: Boolean) {
-        if (on && dotPulse == null) {
-            val a = ObjectAnimator.ofFloat(statusDot, "alpha", 1f, 0.25f)
-            a.duration = 600
-            a.repeatMode = ValueAnimator.REVERSE
-            a.repeatCount = ValueAnimator.INFINITE
-            a.start()
-            dotPulse = a
-        } else if (!on && dotPulse != null) {
-            dotPulse?.cancel()
-            dotPulse = null
-            statusDot.alpha = 1f
-        }
-    }
-
-    private fun animateEntrance() {
-        for (i in 0 until content.childCount) {
-            val c = content.getChildAt(i)
-            c.alpha = 0f
-            c.translationY = dp(18).toFloat()
-            c.animate().alpha(1f).translationY(0f).setStartDelay(i * 35L)
-                .setDuration(320).setInterpolator(DecelerateInterpolator()).start()
-        }
-    }
 
     private fun text(s: String, sizeSp: Float, color: Int, bold: Boolean = false): TextView {
         val t = TextView(this)
@@ -669,469 +674,16 @@ class MainActivity : Activity() {
         return t
     }
 
-    private fun pushButton(label: String, minWidthDp: Int, heightDp: Int): Button {
-        val b = Button(this)
-        b.text = label
-        b.isAllCaps = false
-        b.setTextColor(Color.WHITE)
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        b.typeface = Typeface.DEFAULT_BOLD
-        val shape = rounded(cBtn, 6)
-        b.background = RippleDrawable(ColorStateList.valueOf(Color.argb(90, 255, 255, 255)), shape, null)
-        b.tag = shape
-        addPressEffect(b)
-        b.minWidth = dp(minWidthDp)
-        b.minimumWidth = dp(minWidthDp)
-        b.minHeight = dp(heightDp)
-        b.minimumHeight = dp(heightDp)
-        b.stateListAnimator = null
-        b.setPadding(dp(12), 0, dp(12), 0)
-        return b
-    }
-
-    /** [pulse] = nút nhấp nháy nhẹ trong lúc chờ LOGO! phản hồi. */
-    private fun setButton(b: Button, label: String, color: Int, textColor: Int, enabled: Boolean, pulse: Boolean = false) {
-        b.text = label
-        val shape = b.tag as? GradientDrawable
-        if (shape != null) fadeColor(b, shape, color)
-        b.setTextColor(textColor)
-        b.isEnabled = enabled
-        if (pulse) {
-            if (!pulses.containsKey(b)) {
-                val a = ObjectAnimator.ofFloat(b, "alpha", 1f, 0.5f)
-                a.duration = 450
-                a.repeatMode = ValueAnimator.REVERSE
-                a.repeatCount = ValueAnimator.INFINITE
-                a.start()
-                pulses[b] = a
-            }
-        } else {
-            pulses.remove(b)?.cancel()
-            b.alpha = if (enabled) 1f else 0.45f
-        }
-    }
-
-    private fun sectionTitle(s: String): TextView {
-        val t = text(s, 16f, cInkSoft, true)
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.setMargins(dp(4), dp(18), dp(4), dp(8))
-        t.layoutParams = lp
-        return t
-    }
-
-    private fun buildShell() {
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setBackgroundColor(cEnclosure)
-
-        val header = LinearLayout(this)
-        header.orientation = LinearLayout.HORIZONTAL
-        header.gravity = Gravity.CENTER_VERTICAL
-        header.setPadding(dp(18), dp(12), dp(10), dp(10))
-
-        val left = LinearLayout(this)
-        left.orientation = LinearLayout.VERTICAL
-        titleView = text(cfg.title, 21f, cInk, true)
-        left.addView(titleView)
-        val st = LinearLayout(this)
-        st.orientation = LinearLayout.HORIZONTAL
-        st.gravity = Gravity.CENTER_VERTICAL
-        statusDot = circle(cLampOff, 11, 0)
-        st.addView(statusDot)
-        statusText = text("Đang kết nối…", 14f, cInkSoft)
-        statusText.setPadding(dp(7), 0, 0, 0)
-        st.addView(statusText)
-        left.addView(st)
-        header.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        val settings = Button(this)
-        settings.text = "Cài đặt"
-        settings.isAllCaps = false
-        settings.setTextColor(cInk)
-        settings.background = RippleDrawable(
-            ColorStateList.valueOf(Color.argb(50, 0, 0, 0)), rounded(cPlate, 6, cLine), null
-        )
-        settings.stateListAnimator = null
-        settings.minHeight = dp(44)
-        settings.minimumHeight = dp(44)
-        addPressEffect(settings)
-        settings.onTap { showSettings() }
-        header.addView(settings)
-        root.addView(header)
-
-        val line = View(this)
-        line.setBackgroundColor(cLine)
-        root.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
-
-        val scroll = ScrollView(this)
-        content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-        content.setPadding(dp(14), dp(4), dp(14), dp(28))
-        scroll.addView(content)
-        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
-    }
-
-    private fun buildContent() {
-        val conf = cfg
-        titleView.text = conf.title
-        content.removeAllViews()
-        outRows.clear()
-        inCells.clear()
-        paramRows.clear()
-        schedRows.clear()
-        modeCard = null
-        for (a in pulses.values) a.cancel()
-        pulses.clear()
-        for (a in colorAnims.values) a.cancel()
-        colorAnims.clear()
-        shownColor.clear()
-
-        // Chế độ Tự động / Tay
-        if (conf.modeM > 0) {
-            content.addView(sectionTitle("Chế độ điều khiển"))
-            val row = LinearLayout(this)
-            row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.CENTER_VERTICAL
-            row.background = rounded(cPanel, 6, cLine)
-            row.setPadding(dp(12), dp(12), dp(12), dp(12))
-            val plate = LinearLayout(this)
-            plate.orientation = LinearLayout.VERTICAL
-            plate.background = rounded(cPlate, 3, cLine)
-            plate.setPadding(dp(10), dp(6), dp(10), dp(6))
-            val value = text("–", 20f, cInk, true)
-            plate.addView(value)
-            val hint = text("", 13f, cInkSoft)
-            plate.addView(hint)
-            val plp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            plp.rightMargin = dp(12)
-            row.addView(plate, plp)
-            val btn = pushButton("Chuyển", 96, 52)
-            btn.onTap { toggleMode() }
-            row.addView(btn)
-            content.addView(row)
-            modeCard = ModeCard(row, value, hint, btn)
-        }
-
-        // Ngõ ra
-        content.addView(sectionTitle("Ngõ ra (đèn)"))
-        conf.outNames.forEachIndexed { idx, name ->
-            val row = LinearLayout(this)
-            row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.CENTER_VERTICAL
-            row.background = rounded(cPanel, 6, cLine)
-            row.setPadding(dp(12), dp(12), dp(12), dp(12))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(10)
-            row.layoutParams = lp
-
-            val lamp = circle(cLampOff, 44, 5)
-            row.addView(lamp)
-
-            val plate = LinearLayout(this)
-            plate.orientation = LinearLayout.VERTICAL
-            plate.background = rounded(cPlate, 3, cLine)
-            plate.setPadding(dp(10), dp(6), dp(10), dp(6))
-            val nameView = text(name, 17f, cInk, true)
-            nameView.maxLines = 1
-            plate.addView(nameView)
-            val sub = text("Q${idx + 1}", 13f, cInkSoft)
-            plate.addView(sub)
-            val plp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            plp.setMargins(dp(12), 0, dp(12), 0)
-            row.addView(plate, plp)
-
-            val btn = pushButton("Bật", 84, 52)
-            btn.onTap { toggleOutput(idx) }
-            row.addView(btn)
-            content.addView(row)
-            outRows.add(OutRow(row, lamp, sub, btn))
-        }
-
-        // Ngõ vào, 4 ô mỗi hàng
-        if (conf.inNames.isNotEmpty()) {
-            content.addView(sectionTitle("Ngõ vào"))
-            val hint = text(
-                "Đèn là trạng thái ngõ vào thật. Nút Kích gửi xung vào cờ M tương ứng trong chương trình.",
-                13f, cInkSoft
-            )
-            hint.setPadding(dp(4), 0, dp(4), dp(8))
-            content.addView(hint)
-            var rowLayout: LinearLayout? = null
-            conf.inNames.forEachIndexed { idx, name ->
-                if (idx % 4 == 0) {
-                    val r = LinearLayout(this)
-                    r.orientation = LinearLayout.HORIZONTAL
-                    val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    rlp.bottomMargin = dp(8)
-                    content.addView(r, rlp)
-                    rowLayout = r
-                }
-                val cell = LinearLayout(this)
-                cell.orientation = LinearLayout.VERTICAL
-                cell.gravity = Gravity.CENTER_HORIZONTAL
-                cell.background = rounded(cPanel, 6, cLine)
-                cell.setPadding(dp(4), dp(10), dp(4), dp(6))
-                val lamp = circle(cLampOff, 20, 0)
-                cell.addView(lamp)
-                val nv = text(name, 13f, cInk, true)
-                nv.maxLines = 1
-                nv.gravity = Gravity.CENTER
-                nv.setPadding(0, dp(4), 0, 0)
-                cell.addView(nv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                cell.addView(text("I${idx + 1}", 12f, cInkSoft))
-                val btn = pushButton("Kích", 0, 38)
-                btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                btn.onTap { pulseInput(idx) }
-                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38))
-                blp.topMargin = dp(4)
-                cell.addView(btn, blp)
-                val clp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                clp.setMargins(dp(3), 0, dp(3), 0)
-                rowLayout?.addView(cell, clp)
-                inCells.add(InCell(cell, lamp, btn))
-            }
-            val rest = (4 - conf.inNames.size % 4) % 4
-            repeat(rest) {
-                val sp = View(this)
-                val slp = LinearLayout.LayoutParams(0, 1, 1f)
-                slp.setMargins(dp(3), 0, dp(3), 0)
-                rowLayout?.addView(sp, slp)
-            }
-        }
-
-        // Thông số
-        if (conf.params.isNotEmpty()) {
-            content.addView(sectionTitle("Thông số"))
-            conf.params.forEachIndexed { k, p ->
-                val row = LinearLayout(this)
-                row.orientation = LinearLayout.HORIZONTAL
-                row.gravity = Gravity.CENTER_VERTICAL
-                row.background = rounded(cPanel, 6, cLine)
-                row.setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.bottomMargin = dp(10)
-                row.layoutParams = lp
-                val plate = LinearLayout(this)
-                plate.orientation = LinearLayout.VERTICAL
-                plate.background = rounded(cPlate, 3, cLine)
-                plate.setPadding(dp(10), dp(6), dp(10), dp(6))
-                plate.addView(text("${p.name} · VW${p.vw}", 15f, cInk, true))
-                val value = text("–", 24f, cInk, true)
-                plate.addView(value)
-                val plp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                plp.rightMargin = dp(12)
-                row.addView(plate, plp)
-                val btn = pushButton("Sửa", 72, 46)
-                btn.onTap { editParam(k) }
-                row.addView(btn)
-                content.addView(row)
-                paramRows.add(ParamRow(value, btn))
-            }
-        }
-
-        // Lịch bật/tắt đèn
-        if (conf.scheds.isNotEmpty()) {
-            content.addView(sectionTitle("Lịch bật/tắt đèn"))
-            conf.scheds.forEachIndexed { k, sc ->
-                val row = LinearLayout(this)
-                row.orientation = LinearLayout.HORIZONTAL
-                row.gravity = Gravity.CENTER_VERTICAL
-                row.background = rounded(cPanel, 6, cLine)
-                row.setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.bottomMargin = dp(10)
-                row.layoutParams = lp
-                val plate = LinearLayout(this)
-                plate.orientation = LinearLayout.VERTICAL
-                plate.background = rounded(cPlate, 3, cLine)
-                plate.setPadding(dp(10), dp(6), dp(10), dp(6))
-                plate.addView(text(sc.name, 15f, cInk, true))
-                val value = text("–", 19f, cInk, true)
-                plate.addView(value)
-                val plp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                plp.rightMargin = dp(12)
-                row.addView(plate, plp)
-                val btn = pushButton("Đổi giờ", 84, 46)
-                btn.onTap { editSchedule(k) }
-                row.addView(btn)
-                content.addView(row)
-                schedRows.add(SchedRow(value, btn))
-            }
-        }
-
-        footer = text("", 13f, cInkSoft)
-        footer.setPadding(dp(4), dp(14), dp(4), 0)
-        content.addView(footer)
-        animateEntrance()
-    }
-
-    private fun render() {
-        val conf = cfg
-        val online = isOnline()
-        val time = SimpleDateFormat("HH:mm:ss dd/MM", Locale("vi", "VN"))
-
-        // Dòng trạng thái
-        if (conf.isMqtt) {
-            when {
-                online -> {
-                    setLamp(statusDot, cLampOn)
-                    statusText.text = "LOGO! online · qua cloud"
-                }
-                mqttConnected && lastMsg == 0L -> {
-                    setLamp(statusDot, cLampIn)
-                    statusText.text = "Đã nối máy chủ, chờ LOGO!…"
-                }
-                mqttConnected -> {
-                    setLamp(statusDot, cAlarm)
-                    statusText.text = "LOGO! mất tín hiệu"
-                }
-                else -> {
-                    setLamp(statusDot, cAlarm)
-                    statusText.text = "Máy chủ: chưa kết nối"
-                }
-            }
-        } else {
-            when {
-                online -> {
-                    setLamp(statusDot, cLampOn)
-                    statusText.text = "LOGO! online · ${conf.ip}"
-                }
-                hasData -> {
-                    setLamp(statusDot, cAlarm)
-                    statusText.text = "Mất kết nối · ${conf.ip}"
-                }
-                else -> {
-                    setLamp(statusDot, cLampIn)
-                    statusText.text = "Đang kết nối ${conf.ip}…"
-                }
-            }
-        }
-
-        setStatusPulse(shownColor[statusDot] == cLampIn)
-
-        val manual = manualMode()
-        modeCard?.let { mc ->
-            val known = bit("M${conf.modeM}") != null
-            when {
-                !known -> {
-                    setTextPop(mc.value, "Chưa có dữ liệu")
-                    mc.hint.text = "Cờ M${conf.modeM}"
-                }
-                manual == true -> {
-                    setTextPop(mc.value, "TAY")
-                    mc.hint.text = "Đèn theo nút bấm trên app"
-                }
-                else -> {
-                    setTextPop(mc.value, "TỰ ĐỘNG")
-                    mc.hint.text = "Đèn theo hẹn giờ của LOGO!"
-                }
-            }
-            mc.value.setTextColor(if (manual == true) cAlarm else cInk)
-            fadeColor(mc.row, mc.row.background as GradientDrawable, if (manual == true) cRowWarn else cPanel)
-            if (busy.contains("mode")) setButton(mc.btn, "Chờ…", cLampIn, cInk, false, true)
-            else setButton(mc.btn, if (manual == true) "Về Tự động" else "Sang Tay", cBtn, Color.WHITE, online)
-        }
-
-        outRows.forEachIndexed { idx, r ->
-            val q = bit("Q${idx + 1}")
-            val mKnown = bit("M${conf.outCmdM + idx}")
-            val m = mKnown ?: false
-            val b = busy.contains("q$idx")
-            val fbNo = conf.fbFor(idx)
-            val fb = if (fbNo > 0) bit("I$fbNo") else null
-            setLamp(r.lamp, if (q == true) cLampOn else cLampOff)
-
-            var warn = false
-            val state = when {
-                q == null -> "chưa có dữ liệu"
-                q && fb == false -> { warn = true; "ĐANG BẬT nhưng không có điện nhánh (I$fbNo)" }
-                !q && fb == true -> { warn = true; "ĐANG TẮT nhưng nhánh vẫn có điện (I$fbNo)" }
-                q -> "đèn đang SÁNG"
-                else -> "đèn đang TẮT"
-            }
-            val extra = when {
-                q == null -> ""
-                manual == false -> " · tự động"
-                manual == true && m != q -> " · đã ra lệnh " + (if (m) "bật" else "tắt") + ", chờ"
-                manual == true -> " · tay"
-                q && mKnown == false -> " · bật từ tủ"
-                else -> ""
-            }
-            r.sub.text = "Q${idx + 1} · $state$extra"
-            r.sub.setTextColor(if (warn) cAlarm else cInkSoft)
-            fadeColor(
-                r.row, r.row.background as GradientDrawable,
-                when {
-                    warn -> cRowWarn
-                    q == true -> cRowOn
-                    else -> cPanel
-                }
-            )
-
-            val cmdOn = mKnown ?: (q ?: false)
-            when {
-                b -> setButton(r.btn, "Chờ…", cLampIn, cInk, false, true)
-                manual == false -> setButton(r.btn, "Tự động", cLampOff, Color.WHITE, false)
-                cmdOn -> setButton(r.btn, "Tắt", cAlarm, Color.WHITE, online)
-                else -> setButton(r.btn, "Bật", cBtn, Color.WHITE, online)
-            }
-        }
-
-        inCells.forEachIndexed { idx, c ->
-            val v = bit("I${idx + 1}") == true
-            val b = busy.contains("i$idx") || bit("M${conf.inCmdM + idx}") == true
-            setLamp(c.lamp, if (v) cLampIn else cLampOff)
-            fadeColor(c.cell, c.cell.background as GradientDrawable, if (v) cCellOn else cPanel)
-            if (b) setButton(c.btn, "Đang kích", cLampIn, cInk, false, true)
-            else setButton(c.btn, "Kích", cBtn, Color.WHITE, online)
-        }
-
-        conf.scheds.forEachIndexed { k, sc ->
-            val r = schedRows.getOrNull(k) ?: return@forEachIndexed
-            val t = schedTimes(sc)
-            setTextPop(
-                r.value,
-                if (t == null) "Bật –:–  ·  Tắt –:–"
-                else "Bật ${two(t[0])}:${two(t[1])}  ·  Tắt ${two(t[2])}:${two(t[3])}"
-            )
-            if (busy.contains("s$k")) setButton(r.btn, "Chờ…", cLampIn, cInk, false, true)
-            else setButton(r.btn, "Đổi giờ", cBtn, Color.WHITE, online)
-        }
-
-        conf.params.forEachIndexed { k, p ->
-            val r = paramRows.getOrNull(k) ?: return@forEachIndexed
-            val v = vals[paramKey(p)]?.toInt()
-            setTextPop(r.value, if (v == null) "–" else if (p.unit.isEmpty()) "$v" else "$v ${p.unit}")
-            if (busy.contains("p$k")) setButton(r.btn, "Chờ…", cLampIn, cInk, false, true)
-            else setButton(r.btn, "Sửa", cBtn, Color.WHITE, online)
-        }
-
-        val err = if (conf.isMqtt) (if (!online && !mqttConnected) mqttMsg else "") else (if (!online) lastError else "")
-        footer.text = buildString {
-            if (lastOk > 0) {
-                append(if (cacheTime > 0 && cacheTime == lastOk) "Giá trị lưu lần trước, lúc " else "Dữ liệu lúc ")
-                append(time.format(Date(lastOk)))
-            } else {
-                append("Chưa nhận dữ liệu từ LOGO!")
-            }
-            if (conf.isMqtt && lastMsg > 0) append("\nTín hiệu LOGO! gần nhất: ").append(time.format(Date(lastMsg)))
-            if (conf.isMqtt && online && lastOk == 0L) append("\nLOGO! chỉ gửi biến khi có thay đổi. Bấm thử một nút hoặc chờ tủ đổi trạng thái.")
-            if (err.isNotEmpty()) append("\n").append(err)
-        }
-        footer.setTextColor(if (err.isNotEmpty()) cAlarm else cInkSoft)
-    }
-
     // ---------------------------------------------------------------- cài đặt
 
     private fun label(parent: LinearLayout, s: String, topDp: Int = 10) {
-        val l = text(s, 13f, cInkSoft)
+        val l = text(s, 13f, Color.parseColor("#555A5C"))
         l.setPadding(0, dp(topDp), 0, dp(2))
         parent.addView(l)
     }
 
     private fun heading(parent: LinearLayout, s: String) {
-        val h = text(s, 16f, cInk, true)
+        val h = text(s, 16f, Color.parseColor("#1F2326"), true)
         h.setPadding(0, dp(18), 0, 0)
         parent.addView(h)
     }
@@ -1336,6 +888,7 @@ class MainActivity : Activity() {
         dlg.show()
     }
 
+
     private fun applyConfig(newCfg: AppConfig) {
         stopLink()
         AppConfig.save(this, newCfg)
@@ -1352,12 +905,9 @@ class MainActivity : Activity() {
         mqttMsg = ""
         if (old.broker != newCfg.broker || old.pubTopic != newCfg.pubTopic || !newCfg.isMqtt) clearCache()
         else loadCache()
-        buildContent()
         render()
         if (running) startLink()
     }
 
-    private fun toast(s: String) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
-    }
+    private fun toast(s: String) = jsToast(s)
 }
