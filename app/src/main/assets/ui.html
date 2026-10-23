@@ -89,6 +89,11 @@ h1{margin:2px 0 8px;font-size:22px;font-weight:700;line-height:1.2;word-wrap:bre
 .btn[disabled]{opacity:.4;cursor:default}
 .btn.wait{opacity:1;background:var(--amber);color:#0B1320;animation:wait .5s infinite alternate}
 .pv{font-size:22px;font-weight:700;margin-top:4px}
+.ex{display:flex;align-items:center;gap:12px}
+.ex .info b{white-space:normal;font-size:14.5px}
+.ex.on{border-color:rgba(91,157,255,.55);background:linear-gradient(100deg,rgba(91,157,255,.14),var(--card) 60%)}
+.ex .sw[aria-checked=true]{background:var(--blue);box-shadow:0 0 14px rgba(91,157,255,.55)}
+.raw{font-size:11.5px;color:var(--soft);margin-top:6px}
 .ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.35);transform:scale(0);animation:rip .5s ease-out forwards;pointer-events:none}
 @keyframes rip{to{transform:scale(4);opacity:0}}
 .foot{font-size:12px;color:var(--soft);margin:14px 4px 0;white-space:pre-line}
@@ -175,9 +180,15 @@ function build(){
         if(!needOnline())return;const nx=!o.cmd;
         ask(`${nx?'Bật':'Tắt'} ${o.name}?`,'<p>Lệnh sẽ gửi tới LOGO!.</p>',nx?'Bật đèn':'Tắt đèn',()=>A.setOutput(i,nx))}});
   }
+  if(S.extras&&S.extras.length){
+    add('<div class="sec">LỆNH PHỤ</div>');
+    S.extras.forEach((x,i)=>{add(`<div class="card ex" id="x${i}"><div class="info"><b>${esc(x.name)}</b><small>Bit ${esc(x.bit)}</small></div><div><button class="sw" id="xs${i}" role="switch" aria-checked="false" aria-label="${esc(x.name)}"></button><div class="lock" id="xl${i}"></div></div></div>`);
+      $('xs'+i).onclick=()=>{tap();if(!needOnline())return;const x=S.extras[i],nx=!x.on;
+        ask(`${nx?'Bật':'Tắt'}: ${x.name}?`,'<p>Lệnh sẽ gửi tới LOGO!.</p>',nx?'Bật':'Tắt',()=>A.setExtra(i,nx))}});
+  }
   if(S.scheds.length){
     add('<div class="sec">LỊCH BẬT / TẮT</div>');
-    S.scheds.forEach((s,i)=>{add(`<div class="card"><div class="hd"><b>${esc(s.name)}</b><button class="btn" id="bs${i}">Đổi giờ</button></div><div class="times"><span>🌙 Bật<strong id="ton${i}">–:–</strong></span><span>☀ Tắt<strong id="tof${i}">–:–</strong></span></div><div class="bar" id="bar${i}"></div><div class="ticks"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span></div></div>`);
+    S.scheds.forEach((s,i)=>{add(`<div class="card"><div class="hd"><b>${esc(s.name)}</b><button class="btn" id="bs${i}">Đổi giờ</button></div><div class="times"><span>🌙 Bật<strong id="ton${i}">–:–</strong></span><span>☀ Tắt<strong id="tof${i}">–:–</strong></span></div><div class="bar" id="bar${i}"></div><div class="ticks"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span></div><div class="raw" id="raw${i}"></div></div>`);
       $('bs'+i).onclick=()=>{tap();editSched(i)}});
   }
   if(S.params.length){
@@ -186,10 +197,10 @@ function build(){
       $('bp'+i).onclick=()=>{tap();editParam(i)}});
   }
   if(S.ins.length){
-    add('<div class="sec">NGÕ VÀO · bấm để kích</div>');
+    add(`<div class="sec">NGÕ VÀO${S.canPulse?' · bấm để kích':''}</div>`);
     const g=add('<div class="ins"></div>');
     S.ins.forEach((n,i)=>{g.insertAdjacentHTML('beforeend',`<button class="inp" id="in${i}" aria-label="Kích ${esc(n.name)}"><i></i><b>${esc(n.name)}</b><small>I${i+1}</small></button>`);
-      $('in'+i).onclick=()=>{tap();if(!needOnline())return;ask(`Kích ${S.ins[i].name}?`,`<p>Gửi xung ${S.pulseMs} ms vào cờ M tương ứng.</p>`,'Kích',()=>A.pulse(i))}});
+      $('in'+i).onclick=()=>{if(!S.canPulse)return;tap();if(!needOnline())return;ask(`Kích ${S.ins[i].name}?`,`<p>Gửi xung ${S.pulseMs} ms vào cờ M tương ứng.</p>`,'Kích',()=>A.pulse(i))}});
   }
   add('<div class="foot" id="foot"></div>');
 }
@@ -219,7 +230,7 @@ function bar(el,t,now){if(!t){el.innerHTML='';return}const a=(t[0]*60+t[1])/14.4
 
 /* Kotlin gọi hàm này mỗi khi có dữ liệu mới */
 window.update=function(st){
-  const sh=JSON.stringify([st.modeAvail,st.outs.map(o=>o.name),st.ins.map(o=>o.name),st.scheds.map(o=>o.name),st.params.map(o=>o.name)]);
+  const sh=JSON.stringify([st.modeAvail,st.canPulse,st.outs.map(o=>o.name),st.ins.map(o=>o.name),st.scheds.map(o=>o.name),st.params.map(o=>o.name),(st.extras||[]).map(o=>o.name+o.bit)]);
   S=st; if(sh!==shape){shape=sh;build()}
   $('title').textContent=st.title;
   $('chip').className='chip '+st.conn;$('chipT').textContent=st.connText;
@@ -240,9 +251,10 @@ window.update=function(st){
     $('mA').classList.toggle('on',st.manual===false);$('mT').classList.toggle('on',st.manual===true);
     $('modeH').textContent=st.busyMode?'Đang gửi lệnh…':st.manual===true?'Bạn đang bật/tắt từng nhánh bằng tay. Nhớ trả về Tự động khi xong.':st.manual===false?'Đèn chạy theo lịch bật/tắt.':'Chưa đọc được chế độ từ LOGO!.'}
   st.scheds.forEach((s,i)=>{$('ton'+i).textContent=s.t?`${two(s.t[0])}:${two(s.t[1])}`:'–:–';$('tof'+i).textContent=s.t?`${two(s.t[2])}:${two(s.t[3])}`:'–:–';
-    bar($('bar'+i),s.t,st.nowMin);const b=$('bs'+i);b.textContent=s.busy?'Đang ghi…':'Đổi giờ';b.classList.toggle('wait',s.busy);b.disabled=!st.online||s.busy});
+    bar($('bar'+i),s.t,st.nowMin);$('raw'+i).textContent=(!s.t&&s.raw)?`Chưa đọc được giờ. Giá trị thô: ${s.raw}. Đổi kiểu lưu giờ trong Cài đặt.`:'';const b=$('bs'+i);b.textContent=s.busy?'Đang ghi…':'Đổi giờ';b.classList.toggle('wait',s.busy);b.disabled=!st.online||s.busy});
   st.params.forEach((p,i)=>{$('pv'+i).textContent=p.v==null?'–':`${p.v}${p.unit?' '+p.unit:''}`;const b=$('bp'+i);b.textContent=p.busy?'Đang ghi…':'Sửa';b.classList.toggle('wait',p.busy);b.disabled=!st.online||p.busy});
-  st.ins.forEach((o,i)=>{const b=$('in'+i);b.classList.toggle('on',!!o.on);b.classList.toggle('busy',o.busy);b.disabled=!st.online||o.busy});
+  st.ins.forEach((o,i)=>{const b=$('in'+i);b.classList.toggle('on',!!o.on);b.classList.toggle('busy',o.busy);b.disabled=st.canPulse&&(!st.online||o.busy);b.style.cursor=st.canPulse?'pointer':'default'});
+  (st.extras||[]).forEach((x,i)=>{$('x'+i).classList.toggle('on',!!x.on);const w=$('xs'+i);w.setAttribute('aria-checked',String(!!x.on));w.disabled=!st.online||x.busy;w.classList.toggle('wait',x.busy);$('xl'+i).textContent=x.busy?'Chờ…':''});
   $('foot').innerHTML=esc(st.footer)+(st.err?`\n<span class="err">${esc(st.err)}</span>`:'');
 };
 try{A.ready()}catch(e){}
