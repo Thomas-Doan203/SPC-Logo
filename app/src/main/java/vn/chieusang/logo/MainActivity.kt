@@ -179,6 +179,9 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun setParam(k: Int, v: Int) = ui.post { cmdParam(k, v) }.let { }
+
+        @JavascriptInterface
+        fun setExtra(k: Int, on: Boolean) = ui.post { cmdExtra(k, on) }.let { }
     }
 
     private fun jsToast(s: String) {
@@ -326,16 +329,22 @@ class MainActivity : Activity() {
             fun put(prefix: String, start: Int, bits: BooleanArray) {
                 bits.forEachIndexed { k, b -> data["$prefix${start + k}"] = if (b) 1.0 else 0.0 }
             }
+            fun putCmd(start: Int, bits: BooleanArray) {
+                bits.forEachIndexed { k, b -> data[conf.cmdKey(start + k)] = if (b) 1.0 else 0.0 }
+            }
             if (nQ > 0) {
                 put("Q", 1, c.readCoils(conf.qBase, nQ))
-                put("M", conf.outCmdM, c.readCoils(conf.mCoil(conf.outCmdM), nQ))
+                if (conf.outCmdM > 0) putCmd(conf.outCmdM, c.readCoils(conf.cmdCoil(conf.outCmdM), nQ))
             }
             if (nI > 0) {
                 put("I", 1, c.readDiscreteInputs(conf.iBase, nI))
-                put("M", conf.inCmdM, c.readCoils(conf.mCoil(conf.inCmdM), nI))
+                if (conf.inCmdM > 0) putCmd(conf.inCmdM, c.readCoils(conf.cmdCoil(conf.inCmdM), nI))
             }
             if (conf.modeM > 0) {
-                put("M", conf.modeM, c.readCoils(conf.mCoil(conf.modeM), 1))
+                putCmd(conf.modeM, c.readCoils(conf.cmdCoil(conf.modeM), 1))
+            }
+            for (e in conf.extras) {
+                if (e.bit > 0) putCmd(e.bit, c.readCoils(conf.cmdCoil(e.bit), 1))
             }
             // Ngõ vào phản hồi nằm ngoài I1..In đang hiển thị thì đọc thêm
             val maxFb = conf.fbInputs.maxOrNull() ?: 0
@@ -385,9 +394,9 @@ class MainActivity : Activity() {
     private fun writeBit(m: Int, v: Boolean) {
         val conf = cfg
         if (conf.isMqtt) {
-            (mqtt ?: throw IOException("Chưa nối máy chủ MQTT")).write("M$m", if (v) 1 else 0)
+            (mqtt ?: throw IOException("Chưa nối máy chủ MQTT")).write(conf.cmdKey(m), if (v) 1 else 0)
         } else {
-            ensureClient().writeCoil(conf.mCoil(m), v)
+            ensureClient().writeCoil(conf.cmdCoil(m), v)
         }
     }
 
@@ -448,7 +457,7 @@ class MainActivity : Activity() {
     private fun manualMode(): Boolean? {
         val conf = cfg
         if (conf.modeM <= 0) return null
-        return bit("M${conf.modeM}") ?: false
+        return bit(conf.cmdKey(conf.modeM)) ?: false
     }
 
     private fun cmdMode(manual: Boolean) {
@@ -469,7 +478,7 @@ class MainActivity : Activity() {
 
     private fun cmdPulse(idx: Int) {
         val conf = cfg
-        if (idx !in conf.inNames.indices) return
+        if (conf.inCmdM <= 0 || idx !in conf.inNames.indices) return
         val m = conf.inCmdM + idx
         val ms = conf.pulseMs.coerceIn(100, 10000).toLong()
         sendCommand("i$idx", null) {
@@ -480,6 +489,12 @@ class MainActivity : Activity() {
                 writeBit(m, false)
             }
         }
+    }
+
+    private fun cmdExtra(k: Int, on: Boolean) {
+        val e = cfg.extras.getOrNull(k) ?: return
+        if (e.bit <= 0) return
+        sendCommand("x$k", null) { writeBit(e.bit, on) }
     }
 
     private fun cmdSched(k: Int, t: IntArray) {
@@ -507,7 +522,16 @@ class MainActivity : Activity() {
     /** Giờ bật và giờ tắt (h, m, h, m) đọc được từ LOGO!, null nếu chưa có hoặc sai dạng. */
     private fun schedTimes(sc: Sched): IntArray? {
         val w = IntArray(sc.words) { i -> vals["VW${sc.addr(i)}"]?.toInt() ?: return null }
+        fun bcd(x: Int): Int? {
+            val a = x shr 12 and 0xF; val b = x shr 8 and 0xF; val c = x shr 4 and 0xF; val d = x and 0xF
+            return if (a > 9 || b > 9 || c > 9 || d > 9) null else (a * 10 + b) * 100 + c * 10 + d
+        }
         val t = when (sc.fmt) {
+            "bcd" -> {
+                val on = bcd(w[0]) ?: return null
+                val off = bcd(w[1]) ?: return null
+                intArrayOf(on / 100, on % 100, off / 100, off % 100)
+            }
             "goi" -> intArrayOf(w[0] shr 8 and 0xFF, w[0] and 0xFF, w[1] shr 8 and 0xFF, w[1] and 0xFF)
             "hhmm" -> intArrayOf(w[0] / 100, w[0] % 100, w[1] / 100, w[1] % 100)
             else -> intArrayOf(w[0], w[1], w[2], w[3])
@@ -517,6 +541,10 @@ class MainActivity : Activity() {
     }
 
     private fun schedWords(sc: Sched, t: IntArray): IntArray = when (sc.fmt) {
+        "bcd" -> intArrayOf(
+            (t[0] / 10 shl 12) or (t[0] % 10 shl 8) or (t[1] / 10 shl 4) or (t[1] % 10),
+            (t[2] / 10 shl 12) or (t[2] % 10 shl 8) or (t[3] / 10 shl 4) or (t[3] % 10)
+        )
         "goi" -> intArrayOf(t[0] * 256 + t[1], t[2] * 256 + t[3])
         "hhmm" -> intArrayOf(t[0] * 100 + t[1], t[2] * 100 + t[3])
         else -> intArrayOf(t[0], t[1], t[2], t[3])
@@ -570,13 +598,14 @@ class MainActivity : Activity() {
 
         val manual = manualMode()
         st.put("modeAvail", conf.modeM > 0)
-        st.put("manual", if (manual == null || bit("M${conf.modeM}") == null) JSONObject.NULL else manual)
+        st.put("manual", if (manual == null || bit(conf.cmdKey(conf.modeM)) == null) JSONObject.NULL else manual)
+        st.put("canPulse", conf.inCmdM > 0)
         st.put("busyMode", busy.contains("mode"))
 
         val outs = JSONArray()
         conf.outNames.forEachIndexed { idx, name ->
             val q = bit("Q${idx + 1}")
-            val mKnown = bit("M${conf.outCmdM + idx}")
+            val mKnown = if (conf.outCmdM > 0) bit(conf.cmdKey(conf.outCmdM + idx)) else null
             val fbNo = conf.fbFor(idx)
             val fb = if (fbNo > 0) bit("I$fbNo") else null
             var warn = false
@@ -611,7 +640,7 @@ class MainActivity : Activity() {
             val o = JSONObject()
             o.put("name", name)
             o.put("on", bit("I${idx + 1}") == true)
-            o.put("busy", busy.contains("i$idx") || bit("M${conf.inCmdM + idx}") == true)
+            o.put("busy", busy.contains("i$idx") || (conf.inCmdM > 0 && bit(conf.cmdKey(conf.inCmdM + idx)) == true))
             ins.put(o)
         }
         st.put("ins", ins)
@@ -623,9 +652,23 @@ class MainActivity : Activity() {
             val t = schedTimes(sc)
             o.put("t", if (t == null) JSONObject.NULL else JSONArray().put(t[0]).put(t[1]).put(t[2]).put(t[3]))
             o.put("busy", busy.contains("s$k"))
+            // Giá trị thô để đối chiếu khi chọn sai kiểu lưu giờ
+            val raw = (0 until sc.words).map { i -> vals["VW${sc.addr(i)}"]?.toInt() }
+            o.put("raw", if (raw.any { it == null }) "" else raw.joinToString(" / ") + " (kiểu ${sc.fmt})")
             scheds.put(o)
         }
         st.put("scheds", scheds)
+
+        val extras = JSONArray()
+        conf.extras.forEachIndexed { k, e ->
+            val o = JSONObject()
+            o.put("name", e.name)
+            o.put("bit", conf.bitName(e.bit))
+            o.put("on", bit(conf.cmdKey(e.bit)) == true)
+            o.put("busy", busy.contains("x$k"))
+            extras.put(o)
+        }
+        st.put("extras", extras)
 
         val params = JSONArray()
         conf.params.forEachIndexed { k, p ->
@@ -772,13 +815,19 @@ class MainActivity : Activity() {
             c.params.joinToString("\n") { "${it.name};${it.vw};${it.min};${it.max};${it.unit};${it.tag}" }, txt, 3
         )
         val fSched = field(
-            box, "Lịch bật/tắt, mỗi dòng: Tên;VW đầu;kiểu (4w | goi | hhmm)",
+            box, "Lịch bật/tắt, mỗi dòng: Tên;VW đầu;kiểu (bcd | goi | hhmm | 4w)",
             c.scheds.joinToString("\n") { "${it.name};${it.vw};${it.fmt}" }, txt, 4
         )
-        val fOutM = field(box, "Ngõ ra Q1 điều khiển bằng cờ M số", c.outCmdM.toString(), num)
-        val fInM = field(box, "Nút Kích của I1 dùng cờ M số", c.inCmdM.toString(), num)
+        heading(box, "Bit lệnh từ app")
+        val fArea = field(box, "Vùng bit lệnh: V (qua khối Network Input) hoặc M", c.cmdArea, txt)
+        val fModeM = field(box, "Bit chọn chế độ Tay/Tự động (vd V1.0; 0 = không dùng)", c.bitName(c.modeM), txt)
+        val fOutM = field(box, "Bit lệnh tay của Q1, các ngõ sau nối tiếp (vd V1.1)", c.bitName(c.outCmdM), txt)
+        val fInM = field(box, "Bit nút Kích của I1 (0 = không dùng nút Kích)", c.bitName(c.inCmdM), txt)
         val fPulse = field(box, "Độ dài xung nút Kích (ms)", c.pulseMs.toString(), num)
-        val fModeM = field(box, "Cờ M chọn chế độ Tay/Tự động (0 = không dùng)", c.modeM.toString(), num)
+        val fExtra = field(
+            box, "Công tắc phụ, mỗi dòng: Tên;bit (vd Cấm nhánh B1;V0.1)",
+            c.extras.joinToString("\n") { "${it.name};${c.bitName(it.bit)}" }, txt, 3
+        )
         val fFb = field(
             box, "Ngõ vào phản hồi điện nhánh cho Q1, Q2... (vd 5,6,7,8; 0 = không có)",
             c.fbInputs.joinToString(","), txt
@@ -834,11 +883,32 @@ class MainActivity : Activity() {
                     val p = line.split(";").map { it.trim() }
                     val vw = p.getOrNull(1)?.toIntOrNull()
                     val fmt = (p.getOrNull(2) ?: "4w").lowercase()
-                    if (vw == null || vw < 0 || vw % 2 != 0 || fmt !in listOf("4w", "goi", "hhmm")) {
-                        toast("Dòng lịch sai: \"$line\". VW là số chẵn, kiểu là 4w, goi hoặc hhmm")
+                    if (vw == null || vw < 0 || vw % 2 != 0 || fmt !in AppConfig.FORMATS) {
+                        toast("Dòng lịch sai: \"$line\". VW là số chẵn, kiểu là bcd, goi, hhmm hoặc 4w")
                         return@setOnClickListener
                     }
                     scheds.add(Sched(p[0].ifEmpty { "Lịch VW$vw" }, vw, fmt))
+                }
+                val area = if (fArea.text.toString().trim().uppercase().startsWith("M")) "M" else "V"
+                val pc = AppConfig(cmdArea = area)
+                fun bitOf(e: EditText, label: String): Int? {
+                    val b = pc.parseBit(e.text.toString())
+                    if (b == null) toast("$label không hợp lệ: \"${e.text}\"")
+                    return b
+                }
+                val modeBit = bitOf(fModeM, "Bit chế độ") ?: return@setOnClickListener
+                val outBit = bitOf(fOutM, "Bit lệnh tay") ?: return@setOnClickListener
+                val inBit = bitOf(fInM, "Bit nút Kích") ?: return@setOnClickListener
+                val extras = ArrayList<Extra>()
+                for (line in fExtra.text.toString().lines()) {
+                    if (line.isBlank()) continue
+                    val p = line.split(";").map { it.trim() }
+                    val b = pc.parseBit(p.getOrNull(1) ?: "")
+                    if (b == null || b <= 0) {
+                        toast("Dòng công tắc phụ sai: \"$line\"")
+                        return@setOnClickListener
+                    }
+                    extras.add(Extra(p[0].ifEmpty { pc.bitName(b) }, b))
                 }
                 fun names(e: EditText) = e.text.toString().lines().map { it.trim() }.filter { it.isNotEmpty() }
                 val newCfg = AppConfig(
@@ -862,10 +932,12 @@ class MainActivity : Activity() {
                     inNames = names(fIn).take(24),
                     params = params,
                     scheds = scheds,
-                    outCmdM = (fOutM.text.toString().toIntOrNull() ?: 1).coerceAtLeast(1),
-                    inCmdM = (fInM.text.toString().toIntOrNull() ?: 11).coerceAtLeast(1),
+                    cmdArea = area,
+                    outCmdM = outBit,
+                    inCmdM = inBit,
                     pulseMs = (fPulse.text.toString().toIntOrNull() ?: 1000).coerceIn(100, 10000),
-                    modeM = (fModeM.text.toString().toIntOrNull() ?: 0).coerceIn(0, 64),
+                    modeM = modeBit,
+                    extras = extras,
                     fbInputs = fFb.text.toString().split(",", ";", " ")
                         .mapNotNull { it.trim().toIntOrNull() }.map { it.coerceIn(0, 24) }
                 )
